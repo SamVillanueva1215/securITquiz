@@ -1,0 +1,50 @@
+{% extends 'quiz/base.html' %}
+{% block content %}
+    <h2 style="color: #003366;">Student Dashboard</h2>
+    
+    <h3>Available Quizzes</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Time Limit</th>
+                <th>Deadline</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for quiz in available_quizzes %}
+            <tr>
+                <td>{{ quiz.title }}</td>
+                <td>{{ quiz.time_limit_minutes }} mins</td>
+                <td>{{ quiz.deadline }}</td>
+                <td><button class="btn">Start Quiz</button></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4">No quizzes available at this time.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3 style="margin-top: 40px;">Completed Quizzes</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Quiz</th>
+                <th>Score</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for sub in completed_quizzes %}
+            <tr>
+                <td>{{ sub.quiz.title }}</td>
+                <td>{{ sub.score }} ({{ sub.percentage }}%)</td>
+                <td><span style="color: green; font-weight: bold;">DSA Verified</span></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3">No submissions yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}
