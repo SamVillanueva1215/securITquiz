@@ -1,0 +1,73 @@
+
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+
+<div style="max-width: 500px; margin: auto;">
+
+    <h2 style="text-align: center; color: #003366;">
+        Welcome Back!
+    </h2>
+
+    <p style="text-align: center; color: #666;">
+        Log in to your securITquiz account.
+    </p>
+
+    {% if messages %}
+        {% for message in messages %}
+            <p style="padding: 12px; border-radius: 5px;
+                      background-color: #d4edda; color: #155724;">
+                {{ message }}
+            </p>
+        {% endfor %}
+    {% endif %}
+
+    {% if form.non_field_errors %}
+        {% for error in form.non_field_errors %}
+            <p style="padding: 12px; background-color: #f8d7da;
+                      color: #721c24; border-radius: 5px;">
+                {{ error }}
+            </p>
+        {% endfor %}
+    {% endif %}
+
+    <form method="POST">
+        {% csrf_token %}
+
+        {% for field in form %}
+            <div style="margin-bottom: 20px;">
+
+                <label for="{{ field.id_for_label }}"
+                       style="display: block; font-weight: bold;
+                              margin-bottom: 8px;">
+                    {{ field.label }}
+                </label>
+
+                {{ field }}
+
+                {% for error in field.errors %}
+                    <p style="color: red; font-size: 13px;">
+                        {{ error }}
+                    </p>
+                {% endfor %}
+
+            </div>
+        {% endfor %}
+
+        <button type="submit" class="btn"
+                style="width: 100%; margin-top: 10px;">
+            Log In
+        </button>
+
+    </form>
+
+    <p style="text-align: center; margin-top: 20px;">
+        Don't have a student account?
+        <a href="{% url 'register' %}" style="color: #003366;">
+            Register here
+        </a>
+    </p>
+
+</div>
+
+{% endblock %}

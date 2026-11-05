@@ -1,0 +1,70 @@
+
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+
+<div style="max-width: 500px; margin: auto;">
+
+    <h2 style="text-align: center; color: #003366;">
+        Student Registration
+    </h2>
+
+    <p style="text-align: center; color: #666;">
+        Create your securITquiz student account.
+    </p>
+
+    {% if messages %}
+        {% for message in messages %}
+            <p style="padding: 12px; background-color: #d4edda;
+                      color: #155724; border-radius: 5px;">
+                {{ message }}
+            </p>
+        {% endfor %}
+    {% endif %}
+
+    <form method="POST">
+        {% csrf_token %}
+
+        {% for field in form %}
+            <div style="margin-bottom: 18px;">
+
+                <label for="{{ field.id_for_label }}"
+                       style="display: block; font-weight: bold;
+                              margin-bottom: 6px;">
+                    {{ field.label }}
+                </label>
+
+                {{ field }}
+
+                {% for error in field.errors %}
+                    <p style="color: red; font-size: 13px;">
+                        {{ error }}
+                    </p>
+                {% endfor %}
+
+            </div>
+        {% endfor %}
+
+        {% if form.non_field_errors %}
+            {% for error in form.non_field_errors %}
+                <p style="color: red;">{{ error }}</p>
+            {% endfor %}
+        {% endif %}
+
+        <button type="submit" class="btn"
+                style="width: 100%; margin-top: 10px;">
+            Create Student Account
+        </button>
+
+    </form>
+
+    <p style="text-align: center; margin-top: 20px;">
+        Already have an account?
+<a href="{% url 'login' %}" style="color: #003366;">
+    Login here
+</a>
+    </p>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 40px auto; text-align: center;">
+
+    <div style="font-size: 64px; color: #8b0000; margin-bottom: 10px;">
+        &#9888;
+    </div>
+
+    <h2 style="color: #8b0000; margin-bottom: 10px;">
+        403 - Access Denied
+    </h2>
+
+    <p style="color: #555; font-size: 16px; line-height: 1.6;">
+        You do not have permission to access this page. This resource is strictly restricted by Role-Based Access Control (RBAC).
+    </p>
+
+    <div style="background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; padding: 15px; margin: 25px 0; text-align: left;">
+        <p style="margin: 5px 0;"><strong>Required Role:</strong> 
+            {% for role in required_roles %}
+                <span style="background-color: #003366; color: white; padding: 2px 8px; border-radius: 3px; font-size: 13px;">{{ role }}</span>
+            {% endfor %}
+        </p>
+        <p style="margin: 5px 0;"><strong>Your Assigned Role(s):</strong> 
+            {% for role in user_roles %}
+                <span style="background-color: #6c757d; color: white; padding: 2px 8px; border-radius: 3px; font-size: 13px;">{{ role }}</span>
+            {% endfor %}
+        </p>
+    </div>
+
+    <div style="margin-top: 30px;">
+        {% if "Student" in user_roles %}
+            <a href="{% url 'student_dashboard' %}" class="btn">
+                &larr; Return to Student Dashboard
+            </a>
+        {% elif "Instructor" in user_roles %}
+            <a href="{% url 'instructor_dashboard' %}" class="btn">
+                &larr; Return to Instructor Dashboard
+            </a>
+        {% else %}
+            <a href="{% url 'home' %}" class="btn">
+                &larr; Return to Home
+            </a>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

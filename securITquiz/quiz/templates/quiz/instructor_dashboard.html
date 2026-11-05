@@ -1,0 +1,32 @@
+{% extends 'quiz/base.html' %}
+{% block content %}
+    <h2 style="color: #003366;">Instructor Dashboard</h2>
+    <a href="#" class="btn" style="margin-bottom: 20px;">+ Create New Quiz</a>
+    
+    <h3>Managed Quizzes</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Access PIN</th>
+                <th>Time Limit</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for quiz in quizzes %}
+            <tr>
+                <td>{{ quiz.title }}</td>
+                <td><code>{{ quiz.access_pin }}</code></td>
+                <td>{{ quiz.time_limit_minutes }} mins</td>
+                <td>
+                    <a href="#" class="btn" style="padding: 5px 10px; font-size: 12px;">Edit</a>
+                    <a href="#" class="btn" style="padding: 5px 10px; font-size: 12px; background-color: #8b0000;">Results</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4">No quizzes created yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

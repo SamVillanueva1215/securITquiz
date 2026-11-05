@@ -1,0 +1,49 @@
+
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+
+<h1 style="color: #003366;">
+    Welcome to securITquiz
+</h1>
+
+<p>
+    An online examination portal utilizing Digital Signature Algorithm
+    (DSA) verification for grade integrity, automated security logs,
+    and randomized quiz delivery.
+</p>
+
+<div style="margin-top: 25px;">
+
+    {% if user.is_authenticated %}
+
+        {% if user.groups.all.0.name == "Student" %}
+
+            <a href="{% url 'student_dashboard' %}" class="btn">
+                Go to Student Dashboard
+            </a>
+
+        {% elif user.groups.all.0.name == "Instructor" %}
+
+            <a href="{% url 'instructor_dashboard' %}" class="btn">
+                Go to Instructor Dashboard
+            </a>
+
+        {% endif %}
+
+    {% else %}
+
+        <a href="{% url 'login' %}" class="btn">
+            Login
+        </a>
+
+        <a href="{% url 'register' %}" class="btn"
+           style="margin-left: 10px;">
+            Register
+        </a>
+
+    {% endif %}
+
+</div>
+
+{% endblock %}
