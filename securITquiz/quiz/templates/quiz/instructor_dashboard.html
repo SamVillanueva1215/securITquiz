@@ -1,7 +1,16 @@
 {% extends 'quiz/base.html' %}
 {% block content %}
     <h2 style="color: #003366;">Instructor Dashboard</h2>
-    <a href="#" class="btn" style="margin-bottom: 20px;">+ Create New Quiz</a>
+
+    {% if messages %}
+        {% for message in messages %}
+            <p style="padding: 12px; border-radius: 5px; background-color: {% if message.tags == 'error' %}#f8d7da; color: #721c24;{% else %}#d4edda; color: #155724;{% endif %} margin-bottom: 20px;">
+                {{ message }}
+            </p>
+        {% endfor %}
+    {% endif %}
+
+    <a href="{% url 'create_quiz' %}" class="btn" style="margin-bottom: 20px;">+ Create New Quiz</a>
     
     <h3>Managed Quizzes</h3>
     <table>
@@ -21,7 +30,7 @@
                 <td>{{ quiz.time_limit_minutes }} mins</td>
                 <td>
                     <a href="#" class="btn" style="padding: 5px 10px; font-size: 12px;">Edit</a>
-                    <a href="#" class="btn" style="padding: 5px 10px; font-size: 12px; background-color: #8b0000;">Results</a>
+                    <a href="{% url 'instructor_quiz_results' quiz.id %}" class="btn" style="padding: 5px 10px; font-size: 12px; background-color: #8b0000;">Results</a>
                 </td>
             </tr>
             {% empty %}

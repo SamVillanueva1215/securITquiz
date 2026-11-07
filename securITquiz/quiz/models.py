@@ -1,4 +1,3 @@
-
 from django.db import models
 from django.contrib.auth.models import User
 
@@ -37,6 +36,7 @@ class Question(models.Model):
     QUESTION_TYPES = (
         ('MCQ', 'Multiple Choice'),
         ('TF', 'True/False'),
+        ('ID', 'Identification'),
     )
 
     quiz = models.ForeignKey(
@@ -74,6 +74,7 @@ class QuizSubmission(models.Model):
     score = models.FloatField()
     percentage = models.FloatField()
     dsa_signature = models.TextField()
+    answers = models.JSONField(default=dict, blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

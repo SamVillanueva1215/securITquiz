@@ -1,6 +1,14 @@
 {% extends 'quiz/base.html' %}
 {% block content %}
     <h2 style="color: #003366;">Student Dashboard</h2>
+
+    {% if messages %}
+        {% for message in messages %}
+            <p style="padding: 12px; border-radius: 5px; background-color: {% if message.tags == 'error' %}#f8d7da; color: #721c24;{% elif message.tags == 'warning' %}#fff3cd; color: #856404;{% else %}#d4edda; color: #155724;{% endif %} margin-bottom: 20px;">
+                {{ message }}
+            </p>
+        {% endfor %}
+    {% endif %}
     
     <h3>Available Quizzes</h3>
     <table>
@@ -18,7 +26,15 @@
                 <td>{{ quiz.title }}</td>
                 <td>{{ quiz.time_limit_minutes }} mins</td>
                 <td>{{ quiz.deadline }}</td>
-                <td><button class="btn">Start Quiz</button></td>
+                <td>
+                    {% if quiz.id in completed_quiz_ids %}
+                        <span style="color: #28a745; font-weight: bold; font-size: 13px;">✓ Completed</span>
+                    {% elif quiz.deadline and now > quiz.deadline %}
+                        <span style="color: #dc3545; font-weight: bold; font-size: 13px;">Closed</span>
+                    {% else %}
+                        <a href="{% url 'take_quiz' quiz.id %}" class="btn" style="padding: 6px 14px; font-size: 13px;">Start Quiz</a>
+                    {% endif %}
+                </td>
             </tr>
             {% empty %}
             <tr><td colspan="4">No quizzes available at this time.</td></tr>
@@ -38,9 +54,16 @@
         <tbody>
             {% for sub in completed_quizzes %}
             <tr>
-                <td>{{ sub.quiz.title }}</td>
+                <td>
+                    <a href="{% url 'quiz_result' sub.id %}" style="color: #003366; font-weight: bold; text-decoration: underline;">
+                        {{ sub.quiz.title }}
+                    </a>
+                </td>
                 <td>{{ sub.score }} ({{ sub.percentage }}%)</td>
-                <td><span style="color: green; font-weight: bold;">DSA Verified</span></td>
+                <td>
+                    <span style="color: green; font-weight: bold;">DSA Verified</span>
+                    <a href="{% url 'quiz_result' sub.id %}" class="btn" style="padding: 4px 10px; font-size: 12px; margin-left: 10px;">View Result</a>
+                </td>
             </tr>
             {% empty %}
             <tr><td colspan="3">No submissions yet.</td></tr>

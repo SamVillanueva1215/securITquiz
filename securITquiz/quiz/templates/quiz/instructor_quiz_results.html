@@ -1,0 +1,144 @@
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+<div style="max-width: 950px; margin: 0 auto;">
+
+    <!-- Header & Info Card -->
+    <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 25px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 15px; border-bottom: 2px solid #FFD700; padding-bottom: 12px; margin-bottom: 15px;">
+            <div>
+                <h2 style="color: #003366; margin: 0 0 5px 0;">Quiz Results: {{ quiz.title }}</h2>
+                <div style="font-size: 13px; color: #666; margin-top: 4px;">
+                    Access PIN: <code style="background: #eef2f7; padding: 2px 8px; border-radius: 4px; font-weight: bold; color: #003366;">{{ quiz.access_pin }}</code>
+                    &bull; Time Limit: {{ quiz.time_limit_minutes }} mins
+                    &bull; Deadline: {{ quiz.deadline|date:"M d, Y h:i A" }}
+                </div>
+            </div>
+            <div>
+                <a href="{% url 'instructor_dashboard' %}" class="btn" style="background-color: #6c757d; font-size: 13px; padding: 8px 14px;">
+                    &larr; Back to Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- Summary Metrics Grid -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top: 15px;">
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; text-align: center;">
+                <div style="font-size: 11px; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 0.5px;">
+                    Total Submissions
+                </div>
+                <div style="font-size: 26px; font-weight: bold; color: #003366; margin-top: 4px;">
+                    {{ total_submissions }}
+                </div>
+            </div>
+
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; text-align: center;">
+                <div style="font-size: 11px; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 0.5px;">
+                    Average Score
+                </div>
+                <div style="font-size: 26px; font-weight: bold; color: #003366; margin-top: 4px;">
+                    {% if avg_percentage is not None %}{{ avg_percentage }}%{% else %}N/A{% endif %}
+                </div>
+            </div>
+
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; text-align: center;">
+                <div style="font-size: 11px; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 0.5px;">
+                    Pass Rate (&ge;50%)
+                </div>
+                <div style="font-size: 26px; font-weight: bold; color: {% if pass_rate and pass_rate >= 50 %}#28a745{% else %}#003366{% endif %}; margin-top: 4px;">
+                    {% if pass_rate is not None %}{{ pass_rate }}%{% else %}N/A{% endif %}
+                </div>
+            </div>
+
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; text-align: center;">
+                <div style="font-size: 11px; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 0.5px;">
+                    Highest / Lowest
+                </div>
+                <div style="font-size: 22px; font-weight: bold; color: #003366; margin-top: 6px;">
+                    {% if highest_score is not None %}{{ highest_score }}% / {{ lowest_score }}%{% else %}N/A{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div style="padding: 12px 16px; border-radius: 5px; margin-bottom: 20px; font-weight: 500;
+                        background-color: {% if message.tags == 'error' %}#f8d7da; color: #721c24; border: 1px solid #f5c6cb;{% else %}#d4edda; color: #155724; border: 1px solid #c3e6cb;{% endif %}">
+                {{ message }}
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Submissions Table Card -->
+    <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+        <h3 style="color: #003366; margin-top: 0; margin-bottom: 18px; font-size: 18px;">
+            Student Submissions
+        </h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Student Name</th>
+                    <th>Username</th>
+                    <th>Score</th>
+                    <th>Percentage</th>
+                    <th>Submitted At</th>
+                    <th>Status & DSA Integrity</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in submissions_with_status %}
+                <tr>
+                    <td style="font-weight: bold; color: #003366;">
+                        {{ item.submission.student.student_profile.full_name|default:item.submission.student.username }}
+                    </td>
+                    <td>
+                        <code>{{ item.submission.student.username }}</code>
+                    </td>
+                    <td>
+                        {{ item.submission.score|floatformat:0 }} / {{ total_questions }}
+                    </td>
+                    <td style="font-weight: bold; color: {% if item.submission.percentage >= 50 %}#28a745{% else %}#dc3545{% endif %};">
+                        {{ item.submission.percentage }}%
+                    </td>
+                    <td style="font-size: 13px; color: #555;">
+                        {{ item.submission.submitted_at|date:"M d, Y h:i A" }}
+                    </td>
+                    <td>
+                        {% if item.is_dsa_valid %}
+                            <span style="color: #28a745; font-weight: bold; font-size: 12px; background: #e8f5e9; padding: 3px 8px; border-radius: 4px; border: 1px solid #c8e6c9;">
+                                &#x2713; DSA Verified
+                            </span>
+                        {% else %}
+                            <span style="color: #c62828; font-weight: bold; font-size: 12px; background: #ffebee; padding: 3px 8px; border-radius: 4px; border: 1px solid #ffcdd2;">
+                                &#x26A0; Invalid Signature
+                            </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'instructor_submission_detail' item.submission.id %}" class="btn" style="padding: 5px 12px; font-size: 12px;">
+                            Review
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 35px 20px; color: #666; font-size: 15px;">
+                        No students have submitted this quiz yet.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div style="text-align: center; margin-bottom: 25px;">
+        <a href="{% url 'instructor_dashboard' %}" class="btn" style="background-color: #6c757d; padding: 10px 22px;">
+            Return to Instructor Dashboard
+        </a>
+    </div>
+
+</div>
+{% endblock %}
