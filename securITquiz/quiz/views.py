@@ -8,8 +8,9 @@ from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.models import User
 from django.contrib.sessions.models import Session
 from django.db import transaction
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
+from django.contrib.auth.decorators import login_required
 
 from .models import (
     Quiz,
@@ -17,6 +18,7 @@ from .models import (
     Question,
     StudentProfile,
     ActiveSession,
+    DeviceAuthorizationRequest,
     QuizAttempt,
     SecurityLog,
     AuditLog
@@ -31,13 +33,17 @@ from .forms import (
 )
 from .decorators import student_required, instructor_required
 from .crypto import generate_dsa_signature, verify_dsa_signature
-from .middleware import get_client_ip
+from .middleware import get_client_ip, cleanup_expired_sessions, get_or_create_device_id
 from .notifications import (
     notify_student_submission_confirmation,
     notify_instructor_new_submission,
     notify_instructor_dsa_failure,
     notify_students_results_released,
-    notify_suspicious_security_event
+    notify_suspicious_security_event,
+    notify_device_auth_requested,
+    notify_device_auth_approved,
+    notify_device_auth_denied,
+    notify_device_auth_expired,
 )
 
 
@@ -83,11 +89,13 @@ def register(request):
 
 def user_login(request):
     """
-    Handles user authentication with Single Active Session Protection.
+    Handles user authentication with Mutual Two-Device Authorization & Single Active Session Protection.
     If an existing active session is detected on another device/browser:
-    - Prompts user with device conflict warning.
-    - Prevents silent replacement.
-    - Allows user to confirm device switch or cancel.
+    1. The requesting device (Device B) enters 'Waiting for Approval' and remains unauthenticated.
+    2. The currently active session (Device A) receives an on-screen authorization prompt.
+    3. If approved within 1 minute (60s), Device B becomes active and Device A is terminated.
+    4. If denied or timed out, Device A remains active and Device B is rejected.
+    5. Stale/expired sessions (>5 min inactivity) are automatically purged with SESSION_EXPIRED audit logs.
     """
     if request.user.is_authenticated:
         if request.user.groups.filter(name='Instructor').exists():
@@ -107,40 +115,99 @@ def user_login(request):
                 messages.error(request, 'Your account does not have a valid securITquiz role.')
                 return render(request, 'quiz/login.html', {'form': form})
 
-            # Check for existing active session (Single Active Session Protection)
+            # Clean up stale/expired sessions first (5-minute inactivity window)
+            cleanup_expired_sessions(user=user, ip_address=ip)
+
+            # Check for existing active session
             active_session = ActiveSession.objects.filter(user=user).first()
             current_session_key = request.session.session_key
 
-            # If user has an active, unexpired session on another device/session
+            device_id = get_or_create_device_id(request)
+
+            # If user has an active, unexpired session on another device/browser
             if active_session and not active_session.is_expired(timeout_minutes=5):
                 if active_session.session_key != current_session_key:
-                    # Log blocked concurrent attempt
-                    SecurityLog.objects.create(
-                        username_attempted=user.username,
-                        ip_address=ip,
-                        is_success=False,
-                        action='BLOCKED_CONCURRENT_LOGIN'
+                    # Device B enters two-device mutual authorization workflow
+                    if not request.session.session_key:
+                        request.session.save()
+
+                    with transaction.atomic():
+                        # Expire prior pending requests for this user
+                        now = timezone.now()
+                        DeviceAuthorizationRequest.objects.filter(
+                            user=user,
+                            status='PENDING',
+                            expires_at__lte=now
+                        ).update(status='EXPIRED', resolved_at=now)
+
+                        # Create new 1-minute mutual authorization request
+                        auth_req = DeviceAuthorizationRequest.objects.create(
+                            user=user,
+                            requesting_session_key=request.session.session_key,
+                            requesting_device_id=device_id,
+                            authorized_device_id=active_session.device_id or '',
+                            requesting_ip=ip,
+                            requesting_user_agent=request.META.get('HTTP_USER_AGENT', '')[:255],
+                            status='PENDING',
+                            expires_at=now + datetime.timedelta(seconds=60)
+                        )
+
+                        # Track pending login state in Device B's session
+                        request.session['device_auth_request_id'] = auth_req.id
+                        request.session['pending_user_id'] = user.id
+                        request.session['pending_backend'] = user.backend
+
+                        # Security and Audit Logging
+                        SecurityLog.objects.create(
+                            username_attempted=user.username,
+                            ip_address=ip,
+                            is_success=False,
+                            action='BLOCKED_CONCURRENT_LOGIN'
+                        )
+                        AuditLog.objects.create(
+                            actor=user,
+                            actor_username=user.username,
+                            action='CONCURRENT_LOGIN_BLOCKED',
+                            ip_address=ip,
+                            device_id=device_id,
+                            status='BLOCKED',
+                            details=f"Concurrent login attempt detected from IP {ip}. Device authorization requested."
+                        )
+                        AuditLog.objects.create(
+                            actor=user,
+                            actor_username=user.username,
+                            action='DEVICE_AUTHORIZATION_REQUESTED',
+                            ip_address=ip,
+                            device_id=device_id,
+                            status='PENDING',
+                            details=f"Device authorization request #{auth_req.id} created from IP {ip}. Awaiting approval from active session within 60 seconds."
+                        )
+                        AuditLog.objects.create(
+                            actor=user,
+                            actor_username=user.username,
+                            action='DEVICE_AUTH_REQUESTED',
+                            ip_address=ip,
+                            device_id=device_id,
+                            status='PENDING',
+                            details=f"Device authorization request #{auth_req.id} created from IP {ip}."
+                        )
+
+                    # Trigger device authorization and suspicious activity email notifications
+                    notify_device_auth_requested(
+                        user=user,
+                        requesting_ip=ip,
+                        expires_at=auth_req.expires_at
                     )
-                    AuditLog.objects.create(
-                        actor=user,
-                        actor_username=user.username,
-                        action='CONCURRENT_LOGIN_BLOCKED',
+                    notify_suspicious_security_event(
+                        user=user,
                         ip_address=ip,
-                        status='BLOCKED',
-                        details=f"Second device login attempt detected from IP {ip}."
+                        event_type="Concurrent Login Attempt Detected",
+                        details=f"A login attempt was initiated from IP address {ip}. An authorization request was sent to your active session."
                     )
 
-                    # Store pending login in session for explicit user confirmation
-                    request.session['pending_switch_user_id'] = user.id
-                    request.session['pending_switch_backend'] = user.backend
+                    return redirect('waiting_for_approval')
 
-                    return render(request, 'quiz/device_conflict.html', {
-                        'account_username': user.username,
-                        'existing_ip': active_session.ip_address or 'Unknown',
-                        'last_active': active_session.last_activity,
-                    })
-
-            # No conflict: log in user and establish ActiveSession
+            # No active session conflict: log in user and establish ActiveSession
             with transaction.atomic():
                 login(request, user)
                 new_session_key = request.session.session_key
@@ -152,6 +219,7 @@ def user_login(request):
                     user=user,
                     defaults={
                         'session_key': new_session_key,
+                        'device_id': device_id,
                         'ip_address': ip,
                         'last_activity': timezone.now()
                     }
@@ -166,8 +234,18 @@ def user_login(request):
                 AuditLog.objects.create(
                     actor=user,
                     actor_username=user.username,
+                    action='SESSION_CREATED',
+                    ip_address=ip,
+                    device_id=device_id,
+                    status='CREATED',
+                    details="New active session created."
+                )
+                AuditLog.objects.create(
+                    actor=user,
+                    actor_username=user.username,
                     action='LOGIN_SUCCESS',
                     ip_address=ip,
+                    device_id=device_id,
                     status='SUCCESS',
                     details="User logged in successfully."
                 )
@@ -201,6 +279,428 @@ def user_login(request):
     })
 
 
+def waiting_for_approval(request):
+    """
+    Renders the Waiting for Approval screen on Device B while awaiting Device A's response.
+    Device B remains unauthenticated during this phase.
+    """
+    if request.user.is_authenticated:
+        if request.user.groups.filter(name='Instructor').exists():
+            return redirect('instructor_dashboard')
+        return redirect('student_dashboard')
+
+    req_id = request.session.get('device_auth_request_id')
+    if not req_id:
+        return redirect('login')
+
+    auth_req = DeviceAuthorizationRequest.objects.filter(
+        id=req_id,
+        requesting_session_key=request.session.session_key
+    ).first()
+
+    if not auth_req:
+        request.session.pop('device_auth_request_id', None)
+        request.session.pop('pending_user_id', None)
+        request.session.pop('pending_backend', None)
+        messages.error(request, "Authorization request not found. Please log in again.")
+        return redirect('login')
+
+    # Check for expiration
+    auth_req.check_expiration()
+    remaining_seconds = max(0, int((auth_req.expires_at - timezone.now()).total_seconds()))
+
+    active_session = ActiveSession.objects.filter(user=auth_req.user).first()
+
+    return render(request, 'quiz/waiting_for_approval.html', {
+        'auth_req': auth_req,
+        'remaining_seconds': remaining_seconds,
+        'account_username': auth_req.user.username,
+        'existing_ip': active_session.ip_address if active_session else 'Unknown',
+    })
+
+
+def check_approval_status(request):
+    """
+    JSON polling endpoint for Device B to check if Device A approved or denied the login request.
+    Handles automatic promotion of Device B to active session upon approval.
+    """
+    req_id = request.session.get('device_auth_request_id')
+    if not req_id:
+        return JsonResponse({'status': 'NOT_FOUND', 'message': 'No pending authorization request.'})
+
+    with transaction.atomic():
+        auth_req = DeviceAuthorizationRequest.objects.select_for_update().filter(
+            id=req_id,
+            requesting_session_key=request.session.session_key
+        ).first()
+
+        if not auth_req:
+            return JsonResponse({'status': 'NOT_FOUND', 'message': 'Request not found.'})
+
+        now = timezone.now()
+
+        # Check expiration
+        if auth_req.status == 'PENDING' and auth_req.is_expired():
+            auth_req.status = 'EXPIRED'
+            auth_req.resolved_at = now
+            auth_req.save(update_fields=['status', 'resolved_at'])
+
+            AuditLog.objects.create(
+                actor=auth_req.user,
+                actor_username=auth_req.user.username,
+                action='DEVICE_AUTHORIZATION_EXPIRED',
+                ip_address=auth_req.requesting_ip,
+                device_id=auth_req.requesting_device_id or '',
+                status='EXPIRED',
+                details=f"Device authorization request #{auth_req.id} timed out after 60 seconds without response."
+            )
+            AuditLog.objects.create(
+                actor=auth_req.user,
+                actor_username=auth_req.user.username,
+                action='DEVICE_AUTH_EXPIRED',
+                ip_address=auth_req.requesting_ip,
+                device_id=auth_req.requesting_device_id or '',
+                status='EXPIRED',
+                details=f"Device authorization request #{auth_req.id} timed out after 60 seconds without response."
+            )
+            SecurityLog.objects.create(
+                username_attempted=auth_req.user.username,
+                ip_address=auth_req.requesting_ip,
+                is_success=False,
+                action='DEVICE_AUTH_EXPIRED'
+            )
+            notify_device_auth_expired(
+                user=auth_req.user,
+                requesting_ip=auth_req.requesting_ip
+            )
+
+        if auth_req.status == 'PENDING':
+            remaining = max(0, int((auth_req.expires_at - now).total_seconds()))
+            return JsonResponse({'status': 'PENDING', 'remaining_seconds': remaining})
+
+        elif auth_req.status == 'DENIED':
+            request.session.pop('device_auth_request_id', None)
+            request.session.pop('pending_user_id', None)
+            request.session.pop('pending_backend', None)
+            return JsonResponse({
+                'status': 'DENIED',
+                'message': 'Login request was denied by the active device. Your login was cancelled.'
+            })
+
+        elif auth_req.status == 'EXPIRED':
+            request.session.pop('device_auth_request_id', None)
+            request.session.pop('pending_user_id', None)
+            request.session.pop('pending_backend', None)
+            return JsonResponse({
+                'status': 'EXPIRED',
+                'message': 'Login authorization request timed out after 1 minute without approval. Please log in again.'
+            })
+
+        elif auth_req.status == 'APPROVED':
+            # Complete login on Device B
+            user = auth_req.user
+            backend = request.session.get('pending_backend')
+            user.backend = backend
+            device_id = auth_req.requesting_device_id or get_or_create_device_id(request)
+
+            # Invalidate old session in Django session database
+            old_active = ActiveSession.objects.filter(user=user).first()
+            if old_active:
+                Session.objects.filter(session_key=old_active.session_key).delete()
+
+            login(request, user)
+            new_session_key = request.session.session_key
+            if not new_session_key:
+                request.session.save()
+                new_session_key = request.session.session_key
+
+            ActiveSession.objects.update_or_create(
+                user=user,
+                defaults={
+                    'session_key': new_session_key,
+                    'device_id': device_id,
+                    'ip_address': auth_req.requesting_ip,
+                    'last_activity': now
+                }
+            )
+
+            # Invalidate any other pending requests for this user
+            DeviceAuthorizationRequest.objects.filter(
+                user=user,
+                status='PENDING'
+            ).exclude(id=auth_req.id).update(status='EXPIRED', resolved_at=now)
+
+            SecurityLog.objects.create(
+                username_attempted=user.username,
+                ip_address=auth_req.requesting_ip,
+                is_success=True,
+                action='DEVICE_SWITCH_CONFIRMED'
+            )
+            AuditLog.objects.create(
+                actor=user,
+                actor_username=user.username,
+                action='DEVICE_AUTHORIZATION_TRANSFERRED',
+                ip_address=auth_req.requesting_ip,
+                device_id=device_id,
+                status='TRANSFERRED',
+                details=f"Device authorization completed. Authority transferred to Device B (IP {auth_req.requesting_ip})."
+            )
+            AuditLog.objects.create(
+                actor=user,
+                actor_username=user.username,
+                action='DEVICE_SWITCH_CONFIRMED',
+                ip_address=auth_req.requesting_ip,
+                device_id=device_id,
+                status='CONFIRMED',
+                details=f"Device authorization completed. Device B (IP {auth_req.requesting_ip}) is now the active session authority."
+            )
+            AuditLog.objects.create(
+                actor=user,
+                actor_username=user.username,
+                action='SESSION_CREATED',
+                ip_address=auth_req.requesting_ip,
+                device_id=device_id,
+                status='CREATED',
+                details="Device B session established following mutual authorization."
+            )
+
+            # Clean up pending state
+            request.session.pop('device_auth_request_id', None)
+            request.session.pop('pending_user_id', None)
+            request.session.pop('pending_backend', None)
+
+            redirect_url = '/instructor/' if user.groups.filter(name='Instructor').exists() else '/student/'
+            return JsonResponse({
+                'status': 'APPROVED',
+                'redirect_url': redirect_url
+            })
+
+    return JsonResponse({'status': 'UNKNOWN'})
+
+
+def cancel_authorization_request(request):
+    """
+    Cancels pending authorization from Device B and redirects to login.
+    """
+    req_id = request.session.get('device_auth_request_id')
+    ip = get_client_ip(request)
+
+    if req_id:
+        with transaction.atomic():
+            auth_req = DeviceAuthorizationRequest.objects.select_for_update().filter(
+                id=req_id,
+                requesting_session_key=request.session.session_key
+            ).first()
+
+            if auth_req and auth_req.status == 'PENDING':
+                auth_req.status = 'DENIED'
+                auth_req.resolved_at = timezone.now()
+                auth_req.save(update_fields=['status', 'resolved_at'])
+
+                AuditLog.objects.create(
+                    actor=auth_req.user,
+                    actor_username=auth_req.user.username,
+                    action='DEVICE_SWITCH_CANCELLED',
+                    ip_address=ip,
+                    status='CANCELLED',
+                    details="Device authorization was cancelled by the requesting device."
+                )
+                SecurityLog.objects.create(
+                    username_attempted=auth_req.user.username,
+                    ip_address=ip,
+                    is_success=False,
+                    action='DEVICE_SWITCH_CANCELLED'
+                )
+
+    request.session.pop('device_auth_request_id', None)
+    request.session.pop('pending_user_id', None)
+    request.session.pop('pending_backend', None)
+    messages.info(request, "Login request cancelled.")
+    return redirect('login')
+
+
+@login_required
+def pending_device_request(request):
+    """
+    JSON endpoint polled by Device A (active session) to detect incoming login requests.
+    Strictly verifies that only the currently active session receives requests.
+    """
+    active_session = ActiveSession.objects.filter(user=request.user).first()
+    if not active_session or active_session.session_key != request.session.session_key:
+        return JsonResponse({'has_request': False})
+
+    now = timezone.now()
+    pending = DeviceAuthorizationRequest.objects.filter(
+        user=request.user,
+        status='PENDING',
+        expires_at__gt=now
+    ).order_by('-created_at').first()
+
+    if pending:
+        remaining = max(0, int((pending.expires_at - now).total_seconds()))
+        return JsonResponse({
+            'has_request': True,
+            'request_id': pending.id,
+            'ip_address': pending.requesting_ip or 'Unknown',
+            'user_agent': pending.requesting_user_agent or 'Unknown Device',
+            'remaining_seconds': remaining
+        })
+
+    return JsonResponse({'has_request': False})
+
+
+@login_required
+def respond_device_request(request):
+    """
+    Handles Device A's Approve or Deny action on an incoming device login request.
+    Security:
+    - POST only, CSRF-protected.
+    - Strictly checks that request.session.session_key == active_session.session_key.
+    - Prevents expired or reused requests from being approved.
+    - If approved, marks request APPROVED, records audit trails, and logs out Device A immediately.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'POST method required.'}, status=405)
+
+    active_session = ActiveSession.objects.filter(user=request.user).first()
+    if not active_session or active_session.session_key != request.session.session_key:
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Only the currently active session can approve or deny login requests.'
+        }, status=403)
+
+    try:
+        data = json.loads(request.body) if request.content_type == 'application/json' else request.POST
+        request_id = data.get('request_id')
+        decision = data.get('decision')
+    except Exception:
+        return JsonResponse({'status': 'error', 'message': 'Invalid request payload.'}, status=400)
+
+    if not request_id or decision not in ['approve', 'deny']:
+        return JsonResponse({'status': 'error', 'message': 'Invalid parameters.'}, status=400)
+
+    ip = get_client_ip(request)
+
+    with transaction.atomic():
+        auth_req = DeviceAuthorizationRequest.objects.select_for_update().filter(
+            id=request_id,
+            user=request.user
+        ).first()
+
+        if not auth_req:
+            return JsonResponse({'status': 'error', 'message': 'Authorization request not found.'}, status=404)
+
+        if auth_req.status != 'PENDING' or auth_req.is_expired():
+            if auth_req.status == 'PENDING':
+                auth_req.status = 'EXPIRED'
+                auth_req.resolved_at = timezone.now()
+                auth_req.save(update_fields=['status', 'resolved_at'])
+            return JsonResponse({
+                'status': 'error',
+                'message': 'This authorization request has already expired or been resolved.'
+            }, status=400)
+
+        now = timezone.now()
+
+        if decision == 'approve':
+            auth_req.status = 'APPROVED'
+            auth_req.resolved_at = now
+            auth_req.resolved_by_session_key = request.session.session_key
+            auth_req.save(update_fields=['status', 'resolved_at', 'resolved_by_session_key'])
+
+            # Automatically cancel any other lingering pending requests for this user
+            DeviceAuthorizationRequest.objects.filter(
+                user=request.user,
+                status='PENDING'
+            ).exclude(id=auth_req.id).update(status='EXPIRED', resolved_at=now)
+
+            AuditLog.objects.create(
+                actor=request.user,
+                actor_username=request.user.username,
+                action='DEVICE_AUTHORIZATION_APPROVED',
+                ip_address=ip,
+                device_id=active_session.device_id or '',
+                status='APPROVED',
+                details=f"Device authorization approved by active session. Transferring authority to Device B (IP {auth_req.requesting_ip})."
+            )
+            AuditLog.objects.create(
+                actor=request.user,
+                actor_username=request.user.username,
+                action='DEVICE_AUTH_APPROVED',
+                ip_address=ip,
+                device_id=active_session.device_id or '',
+                status='APPROVED',
+                details=f"Device authorization approved by active session. Transferring authority to Device B (IP {auth_req.requesting_ip})."
+            )
+            SecurityLog.objects.create(
+                username_attempted=request.user.username,
+                ip_address=ip,
+                is_success=True,
+                action='DEVICE_AUTH_APPROVED'
+            )
+
+            # Send email notification for approval
+            notify_device_auth_approved(
+                user=request.user,
+                requesting_ip=auth_req.requesting_ip,
+                approver_ip=ip
+            )
+
+            # Log out Device A immediately
+            logout(request)
+
+            return JsonResponse({
+                'status': 'ok',
+                'decision': 'approved',
+                'logged_out': True,
+                'redirect_url': '/login/'
+            })
+
+        else:  # decision == 'deny'
+            auth_req.status = 'DENIED'
+            auth_req.resolved_at = now
+            auth_req.resolved_by_session_key = request.session.session_key
+            auth_req.save(update_fields=['status', 'resolved_at', 'resolved_by_session_key'])
+
+            AuditLog.objects.create(
+                actor=request.user,
+                actor_username=request.user.username,
+                action='DEVICE_AUTHORIZATION_DENIED',
+                ip_address=ip,
+                device_id=active_session.device_id or '',
+                status='DENIED',
+                details=f"Device authorization denied by active session for login attempt from IP {auth_req.requesting_ip}."
+            )
+            AuditLog.objects.create(
+                actor=request.user,
+                actor_username=request.user.username,
+                action='DEVICE_AUTH_DENIED',
+                ip_address=ip,
+                device_id=active_session.device_id or '',
+                status='DENIED',
+                details=f"Device authorization denied by active session for login attempt from IP {auth_req.requesting_ip}."
+            )
+            SecurityLog.objects.create(
+                username_attempted=request.user.username,
+                ip_address=ip,
+                is_success=False,
+                action='DEVICE_AUTH_DENIED'
+            )
+
+            # Send email notification for denial
+            notify_device_auth_denied(
+                user=request.user,
+                requesting_ip=auth_req.requesting_ip,
+                denier_ip=ip
+            )
+
+            return JsonResponse({
+                'status': 'ok',
+                'decision': 'denied',
+                'logged_out': False
+            })
+
+
 def confirm_device_switch(request):
     """
     Handles confirmed device switch: invalidates old session, establishes new session.
@@ -208,8 +708,8 @@ def confirm_device_switch(request):
     if request.method != 'POST':
         return redirect('login')
 
-    user_id = request.session.get('pending_switch_user_id')
-    backend = request.session.get('pending_switch_backend')
+    user_id = request.session.get('pending_switch_user_id') or request.session.get('pending_user_id')
+    backend = request.session.get('pending_switch_backend') or request.session.get('pending_backend')
 
     if not user_id:
         messages.error(request, "No pending login session found. Please log in again.")
@@ -259,6 +759,8 @@ def confirm_device_switch(request):
     # Clean up pending state
     request.session.pop('pending_switch_user_id', None)
     request.session.pop('pending_switch_backend', None)
+    request.session.pop('pending_user_id', None)
+    request.session.pop('pending_backend', None)
 
     messages.success(request, "Device switch confirmed. Your previous session has been terminated.")
     if user.groups.filter(name='Instructor').exists():
@@ -270,7 +772,7 @@ def cancel_device_switch(request):
     """
     Cancels device switch request and preserves the existing session on the other device.
     """
-    user_id = request.session.get('pending_switch_user_id')
+    user_id = request.session.get('pending_switch_user_id') or request.session.get('pending_user_id')
     ip = get_client_ip(request)
     if user_id:
         user = User.objects.filter(id=user_id).first()
@@ -292,6 +794,8 @@ def cancel_device_switch(request):
 
     request.session.pop('pending_switch_user_id', None)
     request.session.pop('pending_switch_backend', None)
+    request.session.pop('pending_user_id', None)
+    request.session.pop('pending_backend', None)
     messages.info(request, "Login cancelled. Your existing session remains active on your other device.")
     return redirect('login')
 
@@ -299,6 +803,7 @@ def cancel_device_switch(request):
 def user_logout(request):
     if request.user.is_authenticated:
         ip = get_client_ip(request)
+        device_id = get_or_create_device_id(request)
         ActiveSession.objects.filter(user=request.user).delete()
         SecurityLog.objects.create(
             username_attempted=request.user.username,
@@ -309,8 +814,18 @@ def user_logout(request):
         AuditLog.objects.create(
             actor=request.user,
             actor_username=request.user.username,
+            action='SESSION_LOGOUT',
+            ip_address=ip,
+            device_id=device_id,
+            status='SUCCESS',
+            details="User logged out cleanly and active session terminated."
+        )
+        AuditLog.objects.create(
+            actor=request.user,
+            actor_username=request.user.username,
             action='LOGOUT',
             ip_address=ip,
+            device_id=device_id,
             status='SUCCESS',
             details="User logged out cleanly."
         )
@@ -705,40 +1220,47 @@ def quiz_result(request, submission_id):
 
     ip = get_client_ip(request)
     timestamp_str = submission.submitted_at.isoformat()
-    is_dsa_valid = verify_dsa_signature(
-        student_username=submission.student.username,
-        quiz_id=submission.quiz.id,
-        score=submission.score,
-        percentage=submission.percentage,
-        timestamp_str=timestamp_str,
-        hex_signature=submission.dsa_signature,
-        answers=submission.answers,
-        signature_version=submission.signature_version
-    )
+    has_sig = bool(submission.dsa_signature and submission.dsa_signature.strip())
 
-    if is_dsa_valid:
-        AuditLog.objects.create(
-            actor=request.user,
-            actor_username=request.user.username,
-            action='DSA_VERIFY_SUCCESS',
-            ip_address=ip,
-            quiz=submission.quiz,
-            submission=submission,
-            status='VALID',
-            details=f"DSA v{submission.signature_version} signature verified successfully."
-        )
+    if not has_sig:
+        is_dsa_valid = False
+        dsa_status = 'UNSIGNED'
     else:
-        AuditLog.objects.create(
-            actor=request.user,
-            actor_username=request.user.username,
-            action='DSA_VERIFY_FAILED',
-            ip_address=ip,
-            quiz=submission.quiz,
-            submission=submission,
-            status='TAMPER_ALERT',
-            details=f"DSA verification failed for submission ID {submission.id}!"
+        is_dsa_valid = verify_dsa_signature(
+            student_username=submission.student.username,
+            quiz_id=submission.quiz.id,
+            score=submission.score,
+            percentage=submission.percentage,
+            timestamp_str=timestamp_str,
+            hex_signature=submission.dsa_signature,
+            answers=submission.answers,
+            signature_version=submission.signature_version
         )
-        notify_instructor_dsa_failure(submission)
+        dsa_status = 'VERIFIED' if is_dsa_valid else 'TAMPERED'
+
+        if is_dsa_valid:
+            AuditLog.objects.create(
+                actor=request.user,
+                actor_username=request.user.username,
+                action='DSA_VERIFY_SUCCESS',
+                ip_address=ip,
+                quiz=submission.quiz,
+                submission=submission,
+                status='VALID',
+                details=f"DSA v{submission.signature_version} signature verified successfully."
+            )
+        else:
+            AuditLog.objects.create(
+                actor=request.user,
+                actor_username=request.user.username,
+                action='DSA_VERIFY_FAILED',
+                ip_address=ip,
+                quiz=submission.quiz,
+                submission=submission,
+                status='TAMPER_ALERT',
+                details=f"DSA verification failed for submission ID {submission.id}!"
+            )
+            notify_instructor_dsa_failure(submission)
 
     # Respect Results Release status
     results_released = submission.quiz.results_released
@@ -885,19 +1407,27 @@ def instructor_quiz_results(request, quiz_id):
     submissions_with_status = []
     for sub in submissions:
         timestamp_str = sub.submitted_at.isoformat()
-        is_valid = verify_dsa_signature(
-            student_username=sub.student.username,
-            quiz_id=quiz.id,
-            score=sub.score,
-            percentage=sub.percentage,
-            timestamp_str=timestamp_str,
-            hex_signature=sub.dsa_signature,
-            answers=sub.answers,
-            signature_version=sub.signature_version
-        )
+        has_sig = bool(sub.dsa_signature and sub.dsa_signature.strip())
+        if not has_sig:
+            is_valid = False
+            dsa_status = 'UNSIGNED'
+        else:
+            is_valid = verify_dsa_signature(
+                student_username=sub.student.username,
+                quiz_id=quiz.id,
+                score=sub.score,
+                percentage=sub.percentage,
+                timestamp_str=timestamp_str,
+                hex_signature=sub.dsa_signature,
+                answers=sub.answers,
+                signature_version=sub.signature_version
+            )
+            dsa_status = 'VERIFIED' if is_valid else 'TAMPERED'
+
         submissions_with_status.append({
             'submission': sub,
             'is_dsa_valid': is_valid,
+            'dsa_status': dsa_status,
         })
 
     total_submissions = len(submissions_with_status)
@@ -1017,16 +1547,21 @@ def export_quiz_results(request, quiz_id):
         student_id_val = prof.student_id if prof else 'N/A'
 
         timestamp_str = sub.submitted_at.isoformat()
-        is_valid = verify_dsa_signature(
-            student_username=sub.student.username,
-            quiz_id=quiz.id,
-            score=sub.score,
-            percentage=sub.percentage,
-            timestamp_str=timestamp_str,
-            hex_signature=sub.dsa_signature,
-            answers=sub.answers,
-            signature_version=sub.signature_version
-        )
+        has_sig = bool(sub.dsa_signature and sub.dsa_signature.strip())
+        if not has_sig:
+            sig_status_str = "UNSIGNED / UNVERIFIED"
+        else:
+            is_valid = verify_dsa_signature(
+                student_username=sub.student.username,
+                quiz_id=quiz.id,
+                score=sub.score,
+                percentage=sub.percentage,
+                timestamp_str=timestamp_str,
+                hex_signature=sub.dsa_signature,
+                answers=sub.answers,
+                signature_version=sub.signature_version
+            )
+            sig_status_str = "VERIFIED" if is_valid else "TAMPERED / INVALID"
 
         writer.writerow([
             full_name,
@@ -1040,7 +1575,7 @@ def export_quiz_results(request, quiz_id):
             "PASSED" if sub.is_passed else "FAILED",
             sub.submitted_at.strftime("%Y-%m-%d %H:%M:%S"),
             f"Version {sub.signature_version}",
-            "VERIFIED" if is_valid else "TAMPERED / INVALID"
+            sig_status_str
         ])
 
     AuditLog.objects.create(
@@ -1070,16 +1605,22 @@ def instructor_submission_detail(request, submission_id):
         return render(request, 'quiz/403.html', {'required_roles': ['Quiz Owner']}, status=403)
 
     timestamp_str = submission.submitted_at.isoformat()
-    is_dsa_valid = verify_dsa_signature(
-        student_username=submission.student.username,
-        quiz_id=submission.quiz.id,
-        score=submission.score,
-        percentage=submission.percentage,
-        timestamp_str=timestamp_str,
-        hex_signature=submission.dsa_signature,
-        answers=submission.answers,
-        signature_version=submission.signature_version
-    )
+    has_sig = bool(submission.dsa_signature and submission.dsa_signature.strip())
+    if not has_sig:
+        is_dsa_valid = False
+        dsa_status = 'UNSIGNED'
+    else:
+        is_dsa_valid = verify_dsa_signature(
+            student_username=submission.student.username,
+            quiz_id=submission.quiz.id,
+            score=submission.score,
+            percentage=submission.percentage,
+            timestamp_str=timestamp_str,
+            hex_signature=submission.dsa_signature,
+            answers=submission.answers,
+            signature_version=submission.signature_version
+        )
+        dsa_status = 'VERIFIED' if is_dsa_valid else 'TAMPERED'
 
     questions = submission.quiz.questions.all().order_by('id')
     total_questions = questions.count()
@@ -1108,6 +1649,7 @@ def instructor_submission_detail(request, submission_id):
         'question_reviews': question_reviews,
         'total_questions': total_questions,
         'is_dsa_valid': is_dsa_valid,
+        'dsa_status': dsa_status,
     })
 
 

@@ -118,6 +118,7 @@ class ActiveSession(models.Model):
         related_name='active_session'
     )
     session_key = models.CharField(max_length=40, db_index=True)
+    device_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     last_activity = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -127,6 +128,58 @@ class ActiveSession(models.Model):
 
     def __str__(self):
         return f"ActiveSession: {self.user.username} ({self.session_key})"
+
+
+class DeviceAuthorizationRequest(models.Model):
+    """
+    Manages mutual two-device authentication authorization requests.
+    When a user attempts to log in from Device B while Device A has an active session:
+    - Device B creates a pending request with a 1-minute expiration window.
+    - Device A (the currently active session) receives an on-screen authorization prompt.
+    - If Device A approves within 1 minute, Device B is authenticated, and Device A is terminated.
+    - If denied or expired, Device A remains active and Device B remains unauthenticated.
+    """
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending Approval'),
+        ('APPROVED', 'Approved'),
+        ('DENIED', 'Denied'),
+        ('EXPIRED', 'Expired'),
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='device_auth_requests'
+    )
+    requesting_session_key = models.CharField(max_length=64, db_index=True)
+    requesting_device_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    authorized_device_id = models.CharField(max_length=64, blank=True, default='')
+    requesting_ip = models.GenericIPAddressField(null=True, blank=True)
+    requesting_user_agent = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default='PENDING',
+        db_index=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by_session_key = models.CharField(max_length=64, blank=True, null=True)
+
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    def check_expiration(self):
+        if self.status == 'PENDING' and self.is_expired():
+            self.status = 'EXPIRED'
+            self.resolved_at = timezone.now()
+            self.save(update_fields=['status', 'resolved_at'])
+            return True
+        return False
+
+    def __str__(self):
+        return f"AuthRequest #{self.id}: {self.user.username} from {self.requesting_ip} [{self.status}]"
 
 
 class QuizAttempt(models.Model):
@@ -193,14 +246,26 @@ class AuditLog(models.Model):
     Tracks authentication, quiz management, examination lifecycle, and cryptographic verification.
     """
     ACTION_CHOICES = (
-        # Authentication
+        # Authentication & Session Lifecycle
         ('LOGIN_SUCCESS', 'Login Success'),
         ('LOGIN_FAILED', 'Login Failed'),
         ('LOGOUT', 'Logout'),
+        ('SESSION_CREATED', 'Session Created'),
+        ('SESSION_EXPIRED', 'Session Inactivity Expired'),
+        ('SESSION_REVOKED', 'Session Revoked'),
+        ('SESSION_LOGOUT', 'Session Logout'),
         ('CONCURRENT_LOGIN_BLOCKED', 'Concurrent Login Blocked'),
         ('DEVICE_SWITCH_CONFIRMED', 'Device Switch Confirmed'),
         ('DEVICE_SWITCH_CANCELLED', 'Device Switch Cancelled'),
-        ('SESSION_EXPIRED', 'Session Inactivity Expired'),
+        ('DEVICE_AUTH_REQUESTED', 'Device Authorization Requested'),
+        ('DEVICE_AUTHORIZATION_REQUESTED', 'Device Authorization Requested'),
+        ('DEVICE_AUTH_APPROVED', 'Device Authorization Approved'),
+        ('DEVICE_AUTHORIZATION_APPROVED', 'Device Authorization Approved'),
+        ('DEVICE_AUTH_DENIED', 'Device Authorization Denied'),
+        ('DEVICE_AUTHORIZATION_DENIED', 'Device Authorization Denied'),
+        ('DEVICE_AUTH_EXPIRED', 'Device Authorization Expired'),
+        ('DEVICE_AUTHORIZATION_EXPIRED', 'Device Authorization Expired'),
+        ('DEVICE_AUTHORIZATION_TRANSFERRED', 'Device Authorization Transferred'),
         # Quiz Management
         ('QUIZ_CREATED', 'Quiz Created'),
         ('QUIZ_EDITED', 'Quiz Edited'),
@@ -233,6 +298,7 @@ class AuditLog(models.Model):
     actor_username = models.CharField(max_length=150)
     action = models.CharField(max_length=64, choices=ACTION_CHOICES)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+    device_id = models.CharField(max_length=64, blank=True, default='')
     timestamp = models.DateTimeField(auto_now_add=True)
     quiz = models.ForeignKey(
         Quiz,

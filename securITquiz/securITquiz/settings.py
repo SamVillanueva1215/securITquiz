@@ -8,11 +8,18 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-(6*um74ynlw%k8+r+o$fjbdsa&pezpkoq@h6u6oh#=)(j9it-^'
+SECRET_KEY = os.environ.get(
+    'DJANGO_SECRET_KEY',
+    'django-insecure-(6*um74ynlw%k8+r+o$fjbdsa&pezpkoq@h6u6oh#=)(j9it-^'
+)
 
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1')
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
+    if host.strip()
+]
 
 # Application definition
 
@@ -100,9 +107,22 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 # Session Security Configuration
-# 5-minute inactivity expiration window
-SESSION_COOKIE_AGE = 300
+# Cookie lifetime (allows middleware to intercept expired sessions and generate SESSION_EXPIRED audit logs)
+SESSION_COOKIE_AGE = 1800
+# Strict 5-minute inactivity expiration window (enforced by SingleActiveSessionMiddleware)
+SESSION_INACTIVITY_TIMEOUT = 300
 SESSION_SAVE_EVERY_REQUEST = True
+
+# Cookie Security Settings (Part 4.5 & Part 10)
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+# Security Headers & Clickjacking Protection
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True
 
 # Email Configuration via Environment Variables with Safe Console Fallback
 EMAIL_BACKEND = os.environ.get('DJANGO_EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')

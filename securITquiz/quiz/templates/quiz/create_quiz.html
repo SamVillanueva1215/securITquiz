@@ -7,15 +7,6 @@
         Configure quiz parameters and add at least one assessment question.
     </p>
 
-    {% if messages %}
-        {% for message in messages %}
-            <div style="padding: 12px 16px; border-radius: 5px; margin-bottom: 20px; font-weight: 500;
-                        background-color: {% if message.tags == 'error' %}#f8d7da; color: #721c24; border: 1px solid #f5c6cb;{% else %}#d4edda; color: #155724; border: 1px solid #c3e6cb;{% endif %}">
-                {{ message }}
-            </div>
-        {% endfor %}
-    {% endif %}
-
     {% if form.non_field_errors %}
         {% for error in form.non_field_errors %}
             <div style="padding: 12px 16px; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 5px; margin-bottom: 20px;">

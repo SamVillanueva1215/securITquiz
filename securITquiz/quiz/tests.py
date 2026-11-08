@@ -1346,13 +1346,13 @@ class DsaSignatureVersioningAndIntegrityTests(TestCase):
 
 from datetime import timedelta
 from django.contrib.sessions.models import Session
-from quiz.models import ActiveSession, QuizAttempt, AuditLog
+from quiz.models import ActiveSession, QuizAttempt, AuditLog, SecurityLog, DeviceAuthorizationRequest
 from quiz.crypto import KeyManagementError, get_dsa_private_key
 
 
 class SingleActiveSessionTests(TestCase):
     """
-    Tests for Part 2: Single Active Session Protection across Students and Instructors.
+    Tests for Part 2 & Requirement 3: Mutual Two-Device Authorization & Single Active Session Protection.
     """
     def setUp(self):
         self.password = 'StrongPass123!'
@@ -1383,8 +1383,8 @@ class SingleActiveSessionTests(TestCase):
         active = ActiveSession.objects.get(user=self.student)
         self.assertEqual(active.session_key, self.client.session.session_key)
 
-    def test_second_device_receives_conflict_warning(self):
-        """Second device login detects active session and presents conflict warning without silent takeover."""
+    def test_second_device_redirects_to_waiting_for_approval(self):
+        """Second device login detects active session and creates a 1-minute mutual authorization request."""
         # Device 1 logs in
         client1 = Client()
         client1.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
@@ -1393,50 +1393,155 @@ class SingleActiveSessionTests(TestCase):
         # Device 2 attempts login
         client2 = Client()
         response = client2.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'quiz/device_conflict.html')
-        self.assertContains(response, 'Active Session Detected')
-        self.assertContains(response, 'Would you like to continue here and end the existing session?')
+        self.assertRedirects(response, reverse('waiting_for_approval'))
+
+        # Device 2 sees waiting for approval
+        waiting_page = client2.get(reverse('waiting_for_approval'))
+        self.assertEqual(waiting_page.status_code, 200)
+        self.assertTemplateUsed(waiting_page, 'quiz/waiting_for_approval.html')
+        self.assertContains(waiting_page, 'Waiting for Approval')
+
+        # Authorization request created in database
+        auth_req = DeviceAuthorizationRequest.objects.filter(user=self.student, status='PENDING').first()
+        self.assertIsNotNone(auth_req)
+        self.assertEqual(auth_req.requesting_session_key, client2.session.session_key)
+        self.assertFalse(auth_req.is_expired())
 
         # Device 1 session remains active
         active = ActiveSession.objects.get(user=self.student)
         self.assertEqual(active.session_key, original_key)
 
-    def test_confirm_device_switch_terminates_old_and_authorizes_new(self):
-        """Confirming device switch invalidates the old device session and establishes the new device session."""
-        client1 = Client()
-        client1.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        old_key = ActiveSession.objects.get(user=self.student).session_key
+    def test_mutual_authorization_approval_flow(self):
+        """
+        Complete Mutual Authorization Flow:
+        1. Device A is active.
+        2. Device B requests login -> waiting for approval.
+        3. Device A receives on-screen notification via pending_device_request.
+        4. Device A approves -> Device A is logged out.
+        5. Device B check_approval_status returns APPROVED and becomes the new active session.
+        6. If Device A tries to log in again, Device B is now the authorization authority!
+        """
+        client_a = Client()
+        client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        key_a = ActiveSession.objects.get(user=self.student).session_key
 
-        client2 = Client()
-        # Device 2 initiates login and gets conflict
-        client2.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        client_b = Client()
+        res_b = client_b.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        self.assertRedirects(res_b, reverse('waiting_for_approval'))
 
-        # Device 2 confirms device switch
-        confirm_res = client2.post(reverse('confirm_device_switch'))
-        self.assertRedirects(confirm_res, reverse('student_dashboard'))
+        # Device A checks for pending requests
+        pending_res = client_a.get(reverse('pending_device_request'))
+        data_a = json.loads(pending_res.content)
+        self.assertTrue(data_a['has_request'])
+        req_id = data_a['request_id']
 
-        # ActiveSession should now have client2's key
+        # Device A approves
+        approve_res = client_a.post(
+            reverse('respond_device_request'),
+            json.dumps({'request_id': req_id, 'decision': 'approve'}),
+            content_type='application/json'
+        )
+        data_approve = json.loads(approve_res.content)
+        self.assertEqual(data_approve['status'], 'ok')
+        self.assertTrue(data_approve['logged_out'])
+
+        # Device A is now logged out
+        dash_a = client_a.get(reverse('student_dashboard'))
+        self.assertRedirects(dash_a, f"{reverse('login')}?next={reverse('student_dashboard')}")
+
+        # Device B polls approval status
+        status_res = client_b.get(reverse('check_approval_status'))
+        data_b = json.loads(status_res.content)
+        self.assertEqual(data_b['status'], 'APPROVED')
+
+        # Device B is now authenticated and active!
+        dash_b = client_b.get(reverse('student_dashboard'))
+        self.assertEqual(dash_b.status_code, 200)
+
         active = ActiveSession.objects.get(user=self.student)
-        self.assertEqual(active.session_key, client2.session.session_key)
-        self.assertNotEqual(active.session_key, old_key)
+        self.assertEqual(active.session_key, client_b.session.session_key)
+        self.assertNotEqual(active.session_key, key_a)
 
-        # Old session in Django Session table was deleted
-        self.assertFalse(Session.objects.filter(session_key=old_key).exists())
+        # Now: Device A attempts login again -> Device B must approve!
+        res_a2 = client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        self.assertRedirects(res_a2, reverse('waiting_for_approval'))
 
-    def test_cancel_device_switch_preserves_original_session(self):
-        """Cancelling device switch preserves original active session."""
-        client1 = Client()
-        client1.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        original_key = ActiveSession.objects.get(user=self.student).session_key
+        # Device B receives on-screen notification!
+        pending_b = client_b.get(reverse('pending_device_request'))
+        data_b2 = json.loads(pending_b.content)
+        self.assertTrue(data_b2['has_request'])
 
-        client2 = Client()
-        client2.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        cancel_res = client2.post(reverse('cancel_device_switch'))
-        self.assertRedirects(cancel_res, reverse('login'))
+    def test_mutual_authorization_denial_flow(self):
+        """Device A denies login request: Device A remains active, Device B is rejected."""
+        client_a = Client()
+        client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        key_a = ActiveSession.objects.get(user=self.student).session_key
 
-        active = ActiveSession.objects.get(user=self.student)
-        self.assertEqual(active.session_key, original_key)
+        client_b = Client()
+        client_b.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+
+        pending_res = client_a.get(reverse('pending_device_request'))
+        req_id = json.loads(pending_res.content)['request_id']
+
+        # Device A denies
+        deny_res = client_a.post(
+            reverse('respond_device_request'),
+            json.dumps({'request_id': req_id, 'decision': 'deny'}),
+            content_type='application/json'
+        )
+        data_deny = json.loads(deny_res.content)
+        self.assertEqual(data_deny['status'], 'ok')
+        self.assertFalse(data_deny['logged_out'])
+
+        # Device A remains active
+        dash_a = client_a.get(reverse('student_dashboard'))
+        self.assertEqual(dash_a.status_code, 200)
+        self.assertEqual(ActiveSession.objects.get(user=self.student).session_key, key_a)
+
+        # Device B polls status -> DENIED
+        status_res = client_b.get(reverse('check_approval_status'))
+        self.assertEqual(json.loads(status_res.content)['status'], 'DENIED')
+
+    def test_mutual_authorization_expiration_after_1_minute(self):
+        """Requests unapproved after 1 minute expire; Device A remains active, Device B rejected."""
+        client_a = Client()
+        client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+
+        client_b = Client()
+        client_b.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+
+        auth_req = DeviceAuthorizationRequest.objects.get(user=self.student, status='PENDING')
+        # Fast-forward past 1 minute
+        auth_req.expires_at = timezone.now() - timedelta(seconds=5)
+        auth_req.save()
+
+        # Device B polls status -> EXPIRED
+        status_res = client_b.get(reverse('check_approval_status'))
+        self.assertEqual(json.loads(status_res.content)['status'], 'EXPIRED')
+
+        # Expired request cannot be approved
+        respond_res = client_a.post(
+            reverse('respond_device_request'),
+            json.dumps({'request_id': auth_req.id, 'decision': 'approve'}),
+            content_type='application/json'
+        )
+        self.assertEqual(respond_res.status_code, 400)
+
+    def test_revoked_device_cannot_approve(self):
+        """Only the currently active session can approve or deny (revoked sessions are rejected)."""
+        client_a = Client()
+        client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+
+        # Revoke client_a active session key in DB
+        ActiveSession.objects.filter(user=self.student).update(session_key='different_key')
+
+        res = client_a.post(
+            reverse('respond_device_request'),
+            json.dumps({'request_id': 999, 'decision': 'approve'}),
+            content_type='application/json'
+        )
+        # Blocked either by middleware revocation redirect (302) or view permission (403)
+        self.assertIn(res.status_code, [302, 403])
 
     def test_logout_releases_active_session(self):
         """Logging out cleanly deletes ActiveSession record."""
@@ -1446,19 +1551,44 @@ class SingleActiveSessionTests(TestCase):
         self.client.get(reverse('logout'))
         self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
 
-    def test_inactivity_expiration_after_30_minutes(self):
-        """Middleware automatically expires active session after 30 minutes of inactivity."""
+    def test_inactivity_expiration_after_5_minutes(self):
+        """Middleware automatically expires active session after 5 minutes of inactivity with audit log."""
         self.client.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
         active = ActiveSession.objects.get(user=self.student)
 
-        # Simulate 31 minutes of inactivity
-        active.last_activity = timezone.now() - timedelta(minutes=31)
+        # Simulate 6 minutes of inactivity (> 5 minutes)
+        active.last_activity = timezone.now() - timedelta(minutes=6)
         active.save()
 
         # Access an authenticated view
         response = self.client.get(reverse('student_dashboard'))
         self.assertRedirects(response, reverse('login'))
         self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
+
+        # Verify SESSION_EXPIRED recorded in both AuditLog and SecurityLog
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_EXPIRED').exists())
+        self.assertTrue(SecurityLog.objects.filter(username_attempted=self.student.username, action='SESSION_EXPIRED').exists())
+
+    def test_stale_active_session_cleanup_at_login(self):
+        """Stale/expired ActiveSession records (> 5 min) do not block legitimate logins and create SESSION_EXPIRED audit log."""
+        # Create an expired active session
+        ActiveSession.objects.create(
+            user=self.student,
+            session_key='stale_key_123',
+            ip_address='192.168.1.50',
+            last_activity=timezone.now() - timedelta(minutes=10)
+        )
+
+        client = Client()
+        res = client.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        self.assertRedirects(res, reverse('student_dashboard'))
+
+        # Successfully logged in with new active session
+        active = ActiveSession.objects.get(user=self.student)
+        self.assertEqual(active.session_key, client.session.session_key)
+
+        # SESSION_EXPIRED was recorded for the stale session
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_EXPIRED').exists())
 
     def test_independent_accounts_active_simultaneously(self):
         """Different accounts can maintain independent active sessions without conflict."""
@@ -1473,14 +1603,13 @@ class SingleActiveSessionTests(TestCase):
         self.assertEqual(ActiveSession.objects.count(), 2)
 
     def test_instructor_single_session_protection(self):
-        """Single Active Session protection applies equally to Instructors."""
+        """Mutual Two-Device Authorization applies equally to Instructors."""
         client1 = Client()
         client1.post(reverse('login'), {'username': 'prof_flitwick', 'password': self.password})
 
         client2 = Client()
         res2 = client2.post(reverse('login'), {'username': 'prof_flitwick', 'password': self.password})
-        self.assertEqual(res2.status_code, 200)
-        self.assertTemplateUsed(res2, 'quiz/device_conflict.html')
+        self.assertRedirects(res2, reverse('waiting_for_approval'))
 
 
 class ExaminationSecurityAndLifecycleTests(TestCase):
@@ -1757,3 +1886,283 @@ class AuditAndSecurityTests(TestCase):
             crypto.PRIVATE_KEY_PATH = orig_path
             if os.path.exists(tf_path):
                 os.remove(tf_path)
+
+
+class ComprehensiveAuditAndSessionLifecycleTests(TestCase):
+    """
+    Tests for complete audit logging coverage (Part 4.4), server-issued device identification (Part 3.6),
+    and edge-case session management.
+    """
+    def setUp(self):
+        self.password = 'P@ssw0rd123!'
+        self.student = User.objects.create_user(
+            username='audit_student',
+            email='audit@student.edu',
+            password=self.password
+        )
+        student_group, _ = Group.objects.get_or_create(name='Student')
+        self.student.groups.add(student_group)
+
+    def test_session_created_and_logout_audit_logging(self):
+        """Verifies SESSION_CREATED and SESSION_LOGOUT audit events are recorded."""
+        client = Client()
+        # Login records SESSION_CREATED and LOGIN_SUCCESS
+        res = client.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
+        self.assertRedirects(res, reverse('student_dashboard'))
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_CREATED').exists())
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='LOGIN_SUCCESS').exists())
+
+        # Logout records SESSION_LOGOUT and LOGOUT
+        res_logout = client.get(reverse('logout'))
+        self.assertRedirects(res_logout, reverse('login'))
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_LOGOUT').exists())
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='LOGOUT').exists())
+
+    def test_session_revoked_audit_logging_on_superseded_device(self):
+        """Verifies SESSION_REVOKED is recorded when a session is superseded by another device."""
+        client_a = Client()
+        client_a.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
+        self.assertTrue(ActiveSession.objects.filter(user=self.student).exists())
+
+        # Change session key to simulate another device taking over
+        ActiveSession.objects.filter(user=self.student).update(session_key='superseded_key')
+
+        # Next request from Client A is intercepted and logs SESSION_REVOKED
+        res = client_a.get(reverse('student_dashboard'))
+        self.assertRedirects(res, reverse('login'))
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_REVOKED').exists())
+        self.assertTrue(SecurityLog.objects.filter(username_attempted='audit_student', action='SESSION_REVOKED').exists())
+
+    def test_device_authorization_lifecycle_audit_events(self):
+        """
+        Verifies complete audit trails for two-device authorization:
+        DEVICE_AUTHORIZATION_REQUESTED, DEVICE_AUTHORIZATION_APPROVED, DEVICE_AUTHORIZATION_TRANSFERRED.
+        """
+        client_a = Client()
+        client_a.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
+
+        client_b = Client()
+        res_b = client_b.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
+        self.assertRedirects(res_b, reverse('waiting_for_approval'))
+
+        # Verifies DEVICE_AUTHORIZATION_REQUESTED
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='DEVICE_AUTHORIZATION_REQUESTED').exists())
+
+        # Device A approves
+        pending = client_a.get(reverse('pending_device_request'))
+        req_id = json.loads(pending.content)['request_id']
+
+        client_a.post(
+            reverse('respond_device_request'),
+            json.dumps({'request_id': req_id, 'decision': 'approve'}),
+            content_type='application/json'
+        )
+
+        # Verifies DEVICE_AUTHORIZATION_APPROVED
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='DEVICE_AUTHORIZATION_APPROVED').exists())
+
+        # Device B polls approval status
+        client_b.get(reverse('check_approval_status'))
+
+        # Verifies DEVICE_AUTHORIZATION_TRANSFERRED
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='DEVICE_AUTHORIZATION_TRANSFERRED').exists())
+
+    def test_server_issued_device_id_cookie_and_storage(self):
+        """Verifies server issues secure securit_device_id cookie and associates it with ActiveSession."""
+        client = Client()
+        res = client.get(reverse('login'))
+        self.assertEqual(res.status_code, 200)
+
+        # Cookie securit_device_id was set
+        self.assertIn('securit_device_id', res.cookies)
+        device_id = res.cookies['securit_device_id'].value
+        self.assertTrue(len(device_id) > 10)
+
+        # On login, device_id is recorded in ActiveSession
+        client.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
+        active = ActiveSession.objects.get(user=self.student)
+        self.assertEqual(active.device_id, device_id)
+
+
+class NotificationIntegrationTests(TestCase):
+    """
+    Tests for Part 6: Email and Notification Integration across all 9 required scenarios.
+    """
+    def setUp(self):
+        from django.core import mail
+        mail.outbox.clear()
+
+        self.instructor = User.objects.create_user(
+            username='prof_vector',
+            email='vector@hogwarts.edu',
+            password='Pass'
+        )
+        instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+        self.instructor.groups.add(instructor_group)
+
+        self.student = User.objects.create_user(
+            username='stu_colin',
+            email='colin@hogwarts.edu',
+            password='Pass'
+        )
+        student_group, _ = Group.objects.get_or_create(name='Student')
+        self.student.groups.add(student_group)
+
+        self.quiz = Quiz.objects.create(
+            title='Arithmancy Midterm',
+            access_pin='ARITH1',
+            deadline=timezone.now() + timedelta(days=1),
+            created_by=self.instructor
+        )
+
+    def test_all_9_notification_scenarios(self):
+        """Verifies that all 9 notification scenarios format and dispatch emails correctly."""
+        from django.core import mail
+        from quiz import notifications
+
+        # Scenario 1: Suspicious login / security event
+        ok1 = notifications.notify_suspicious_security_event(
+            user=self.student,
+            ip_address='198.51.100.1',
+            event_type='Unusual IP Login',
+            details='Login from foreign network'
+        )
+        self.assertTrue(ok1)
+        self.assertIn('Unusual IP Login', mail.outbox[-1].subject)
+        self.assertEqual(mail.outbox[-1].to, ['colin@hogwarts.edu'])
+
+        # Scenario 2: New device authorization request
+        ok2 = notifications.notify_device_auth_requested(
+            user=self.student,
+            requesting_ip='198.51.100.2',
+            expires_at=timezone.now() + timedelta(seconds=60)
+        )
+        self.assertTrue(ok2)
+        self.assertIn('Authorization Request', mail.outbox[-1].subject)
+        self.assertIn('198.51.100.2', mail.outbox[-1].body)
+
+        # Scenario 3: Device authorization approved
+        ok3 = notifications.notify_device_auth_approved(
+            user=self.student,
+            requesting_ip='198.51.100.2',
+            approver_ip='198.51.100.1'
+        )
+        self.assertTrue(ok3)
+        self.assertIn('Approved', mail.outbox[-1].subject)
+        self.assertIn('198.51.100.2', mail.outbox[-1].body)
+
+        # Scenario 4: Device authorization denied
+        ok4 = notifications.notify_device_auth_denied(
+            user=self.student,
+            requesting_ip='198.51.100.2',
+            denier_ip='198.51.100.1'
+        )
+        self.assertTrue(ok4)
+        self.assertIn('Denied', mail.outbox[-1].subject)
+
+        # Scenario 5: Device authorization expired
+        ok5 = notifications.notify_device_auth_expired(
+            user=self.student,
+            requesting_ip='198.51.100.2'
+        )
+        self.assertTrue(ok5)
+        self.assertIn('Timed Out', mail.outbox[-1].subject)
+
+        # Create submission for scenarios 6, 7, 8
+        sub = QuizSubmission.objects.create(
+            student=self.student,
+            quiz=self.quiz,
+            score=95.0,
+            percentage=95.0,
+            dsa_signature='sig123',
+            signature_version=2
+        )
+
+        # Scenario 6: Student submission confirmation
+        ok6 = notifications.notify_student_submission_confirmation(sub)
+        self.assertTrue(ok6)
+        self.assertIn('Submission Confirmation', mail.outbox[-1].subject)
+        self.assertEqual(mail.outbox[-1].to, ['colin@hogwarts.edu'])
+
+        # Scenario 7: Instructor new submission alert
+        ok7 = notifications.notify_instructor_new_submission(sub)
+        self.assertTrue(ok7)
+        self.assertIn('New Submission Received', mail.outbox[-1].subject)
+        self.assertEqual(mail.outbox[-1].to, ['vector@hogwarts.edu'])
+
+        # Scenario 8: DSA verification failure alert
+        ok8 = notifications.notify_instructor_dsa_failure(sub)
+        self.assertTrue(ok8)
+        self.assertIn('URGENT SECURITY ALERT: DSA', mail.outbox[-1].subject)
+        self.assertEqual(mail.outbox[-1].to, ['vector@hogwarts.edu'])
+
+        # Scenario 9: Quiz results released notification
+        ok9 = notifications.notify_students_results_released(self.quiz)
+        self.assertTrue(ok9)
+        self.assertIn('Results Released', mail.outbox[-1].subject)
+        self.assertEqual(mail.outbox[-1].to, ['colin@hogwarts.edu'])
+
+        # All 9 scenarios triggered and sent emails safely
+        self.assertEqual(len(mail.outbox), 9)
+
+
+class LegacyUnsignedDsaStatusTests(TestCase):
+    """
+    Tests for Part 2.4: Accurate status classification for Unsigned/Legacy records vs Tampered vs Verified.
+    """
+    def setUp(self):
+        self.instructor = User.objects.create_user(
+            username='prof_bathsheda',
+            email='bathsheda@hogwarts.edu',
+            password='Pass'
+        )
+        instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+        self.instructor.groups.add(instructor_group)
+
+        self.student = User.objects.create_user(
+            username='stu_seamus',
+            email='seamus@hogwarts.edu',
+            password='Pass'
+        )
+        student_group, _ = Group.objects.get_or_create(name='Student')
+        self.student.groups.add(student_group)
+        StudentProfile.objects.create(
+            user=self.student,
+            full_name='Seamus Finnigan',
+            student_id='STU-SF01'
+        )
+
+        self.quiz = Quiz.objects.create(
+            title='Ancient Runes Quiz',
+            access_pin='RUNES1',
+            deadline=timezone.now() + timedelta(days=1),
+            created_by=self.instructor
+        )
+
+    def test_legacy_unsigned_record_classified_as_unsigned(self):
+        """A submission with empty dsa_signature is classified as Unsigned / Legacy, not Tampered."""
+        sub = QuizSubmission.objects.create(
+            student=self.student,
+            quiz=self.quiz,
+            score=50.0,
+            percentage=50.0,
+            dsa_signature="",
+            signature_version=1
+        )
+        self.client.force_login(self.instructor)
+
+        # Results table view
+        res = self.client.get(reverse('instructor_quiz_results', args=[self.quiz.id]))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, 'Unsigned / Legacy')
+        self.assertNotContains(res, 'Compromised / Tampered')
+
+        # Submission detail view
+        res_detail = self.client.get(reverse('instructor_submission_detail', args=[sub.id]))
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertContains(res_detail, 'Unsigned / Legacy Record (Missing Signature)')
+
+        # CSV export
+        res_csv = self.client.get(reverse('export_quiz_results', args=[self.quiz.id]))
+        content = res_csv.content.decode('utf-8')
+        self.assertIn('UNSIGNED / UNVERIFIED', content)

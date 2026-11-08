@@ -13,15 +13,6 @@
         Create your securITquiz student account.
     </p>
 
-    {% if messages %}
-        {% for message in messages %}
-            <p style="padding: 12px; background-color: #d4edda;
-                      color: #155724; border-radius: 5px;">
-                {{ message }}
-            </p>
-        {% endfor %}
-    {% endif %}
-
     <form method="POST">
         {% csrf_token %}
 

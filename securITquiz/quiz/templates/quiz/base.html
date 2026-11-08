@@ -260,5 +260,147 @@
         {% block content %}{% endblock %}
     </div>
 
+    {% if user.is_authenticated %}
+    <!-- Mutual Two-Device Authorization Modal (Device A) -->
+    <div id="device-auth-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.65); z-index: 99999; justify-content: center; align-items: center;">
+        <div style="background: white; border-radius: 8px; max-width: 500px; width: 90%; padding: 25px; box-shadow: 0 8px 30px rgba(0,0,0,0.3); text-align: center; border-top: 6px solid #e74c3c;">
+            <div style="font-size: 45px; margin-bottom: 10px;">⚠️</div>
+            <h3 style="color: #003366; margin: 0 0 10px 0;">New Device Login Attempt</h3>
+            <p style="font-size: 15px; color: #555; line-height: 1.5; margin-bottom: 15px;">
+                Another device is attempting to log in to this account (<strong>{{ user.username }}</strong>).
+            </p>
+
+            <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 5px; padding: 12px; margin-bottom: 20px; text-align: left; font-size: 13px; color: #495057;">
+                <p style="margin: 0 0 6px 0;"><strong>Requesting IP:</strong> <code id="auth-req-ip">127.0.0.1</code></p>
+                <p style="margin: 0;"><strong>Expires in:</strong> <span id="auth-req-timer" style="font-weight: bold; color: #e74c3c; font-size: 15px;">60</span> seconds</p>
+            </div>
+
+            <p style="font-size: 14px; color: #666; margin-bottom: 20px;">
+                If you <strong>Approve</strong>, authority will transfer to the new device and this session will be logged out immediately.
+            </p>
+
+            <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+                <button type="button" id="btn-approve-device" class="btn" style="background-color: #27ae60; color: white; padding: 10px 20px; font-size: 14px; border: none; cursor: pointer; border-radius: 4px;">
+                    ✓ Approve (Log Out This Device)
+                </button>
+                <button type="button" id="btn-deny-device" class="btn btn-danger" style="padding: 10px 20px; font-size: 14px; border: none; cursor: pointer; border-radius: 4px;">
+                    ✕ Deny (Keep This Device)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            let activeRequestId = null;
+            let countdownTimer = null;
+            let currentRemaining = 60;
+            const modal = document.getElementById('device-auth-modal');
+            const ipEl = document.getElementById('auth-req-ip');
+            const timerEl = document.getElementById('auth-req-timer');
+            const btnApprove = document.getElementById('btn-approve-device');
+            const btnDeny = document.getElementById('btn-deny-device');
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+
+            function showModal(req) {
+                activeRequestId = req.request_id;
+                ipEl.textContent = req.ip_address || 'Unknown';
+                currentRemaining = req.remaining_seconds || 60;
+                timerEl.textContent = currentRemaining;
+                modal.style.display = 'flex';
+
+                if (countdownTimer) clearInterval(countdownTimer);
+                countdownTimer = setInterval(() => {
+                    if (currentRemaining > 0) {
+                        currentRemaining--;
+                        timerEl.textContent = currentRemaining;
+                    } else {
+                        clearInterval(countdownTimer);
+                        hideModal();
+                    }
+                }, 1000);
+            }
+
+            function hideModal() {
+                modal.style.display = 'none';
+                activeRequestId = null;
+                if (countdownTimer) clearInterval(countdownTimer);
+            }
+
+            function checkPendingAuth() {
+                fetch("{% url 'pending_device_request' %}", {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.has_request) {
+                        if (!activeRequestId || activeRequestId !== data.request_id) {
+                            showModal(data);
+                        }
+                    } else {
+                        if (activeRequestId) {
+                            hideModal();
+                        }
+                    }
+                })
+                .catch(err => console.debug("Pending device check:", err));
+            }
+
+            function respondRequest(decision) {
+                if (!activeRequestId) return;
+                const reqId = activeRequestId;
+                const csrftoken = getCookie('csrftoken');
+
+                fetch("{% url 'respond_device_request' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({
+                        request_id: reqId,
+                        decision: decision
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    hideModal();
+                    if (data.status === 'ok') {
+                        if (data.logged_out && data.redirect_url) {
+                            window.location.href = data.redirect_url;
+                        }
+                    }
+                })
+                .catch(err => {
+                    console.error("Error responding to device request:", err);
+                    hideModal();
+                });
+            }
+
+            btnApprove.addEventListener('click', () => respondRequest('approve'));
+            btnDeny.addEventListener('click', () => respondRequest('deny'));
+
+            // Check every 3 seconds
+            setInterval(checkPendingAuth, 3000);
+            checkPendingAuth();
+        })();
+    </script>
+    {% endif %}
+
 </body>
 </html>

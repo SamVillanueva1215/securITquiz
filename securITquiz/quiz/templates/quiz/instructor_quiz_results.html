@@ -135,10 +135,12 @@
                     </td>
                     <td style="font-size: 12px; color: #555;">{{ item.submission.submitted_at|date:"M d, Y h:i A" }}</td>
                     <td>
-                        {% if item.is_dsa_valid %}
+                        {% if item.dsa_status == 'VERIFIED' or item.is_dsa_valid %}
                             <span class="badge badge-success">✓ DSA Verified (v{{ item.submission.signature_version }})</span>
+                        {% elif item.dsa_status == 'UNSIGNED' or not item.submission.dsa_signature %}
+                            <span class="badge" style="background-color: #7f8c8d; color: white;">⚪ Unsigned / Legacy</span>
                         {% else %}
-                            <span class="badge badge-danger" style="background-color: #c0392b; color: white;">⚠️ TAMPERED</span>
+                            <span class="badge badge-danger" style="background-color: #c0392b; color: white;">⚠️ Compromised / Tampered</span>
                         {% endif %}
                     </td>
                     <td>

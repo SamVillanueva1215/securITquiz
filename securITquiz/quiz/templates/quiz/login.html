@@ -13,15 +13,6 @@
         Log in to your securITquiz account.
     </p>
 
-    {% if messages %}
-        {% for message in messages %}
-            <p style="padding: 12px; border-radius: 5px;
-                      background-color: #d4edda; color: #155724;">
-                {{ message }}
-            </p>
-        {% endfor %}
-    {% endif %}
-
     {% if form.non_field_errors %}
         {% for error in form.non_field_errors %}
             <p style="padding: 12px; background-color: #f8d7da;

@@ -1,0 +1,137 @@
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+<div style="max-width: 550px; margin: 30px auto; text-align: center; padding: 20px 0;">
+
+    <div style="font-size: 55px; margin-bottom: 15px; animation: pulse 2s infinite;">🔐</div>
+
+    <h2 style="color: #003366; margin-bottom: 10px;">Waiting for Approval</h2>
+
+    <p style="font-size: 16px; color: #555; line-height: 1.6; margin-bottom: 25px;">
+        This account (<strong>{{ account_username }}</strong>) is currently active on another device.
+        An authorization notification has been sent to that active session.
+    </p>
+
+    <div style="background-color: #fff9e6; border-left: 4px solid #f1c40f; padding: 18px; text-align: left; margin-bottom: 25px; border-radius: 4px;">
+        <h4 style="margin: 0 0 8px 0; color: #b7950b;">Two-Device Mutual Authorization</h4>
+        <p style="margin: 0 0 10px 0; font-size: 14px; color: #666;">
+            Please open your other active device/browser and click <strong>Approve</strong> to transfer active session authority to this device.
+        </p>
+        <ul style="margin: 0 0 0 20px; padding: 0; font-size: 13px; color: #666;">
+            <li>Active Session IP: <code>{{ existing_ip }}</code></li>
+            <li>Authorization Window: <strong>1 minute (60 seconds)</strong></li>
+        </ul>
+    </div>
+
+    <!-- Countdown Timer -->
+    <div style="margin-bottom: 25px;">
+        <div style="font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Time Remaining</div>
+        <div id="countdown-display" style="font-size: 38px; font-weight: bold; font-family: monospace; color: #003366;">
+            01:00
+        </div>
+        <div id="status-spinner" style="margin-top: 10px; font-size: 14px; color: #2980b9;">
+            <span style="display: inline-block; animation: spin 1s linear infinite;">⏳</span> Waiting for response from active device...
+        </div>
+    </div>
+
+    <!-- Status Message Box (dynamically updated) -->
+    <div id="status-message" style="display: none; padding: 14px; border-radius: 4px; margin-bottom: 20px; font-weight: bold;"></div>
+
+    <!-- Cancel Button -->
+    <form method="POST" action="{% url 'cancel_authorization_request' %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-secondary" style="padding: 10px 24px; font-size: 14px;">
+            ✕ Cancel Login Attempt
+        </button>
+    </form>
+
+</div>
+
+<style>
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.08); } 100% { transform: scale(1); } }
+</style>
+
+<script>
+    (function() {
+        let remainingSeconds = {{ remaining_seconds|default:60 }};
+        const countdownEl = document.getElementById('countdown-display');
+        const statusSpinner = document.getElementById('status-spinner');
+        const statusMsg = document.getElementById('status-message');
+        let pollInterval = null;
+        let timerInterval = null;
+
+        function updateDisplay() {
+            const mins = Math.floor(remainingSeconds / 60);
+            const secs = remainingSeconds % 60;
+            countdownEl.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            if (remainingSeconds <= 10) {
+                countdownEl.style.color = '#c0392b';
+            }
+        }
+
+        function checkStatus() {
+            fetch("{% url 'check_approval_status' %}", {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'APPROVED') {
+                    clearInterval(pollInterval);
+                    clearInterval(timerInterval);
+                    statusSpinner.style.display = 'none';
+                    statusMsg.style.display = 'block';
+                    statusMsg.style.backgroundColor = '#d4edda';
+                    statusMsg.style.color = '#155724';
+                    statusMsg.style.border = '1px solid #c3e6cb';
+                    statusMsg.textContent = '✓ Login Approved! Redirecting to your dashboard...';
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url || '/';
+                    }, 1200);
+                } else if (data.status === 'DENIED') {
+                    clearInterval(pollInterval);
+                    clearInterval(timerInterval);
+                    statusSpinner.style.display = 'none';
+                    statusMsg.style.display = 'block';
+                    statusMsg.style.backgroundColor = '#f8d7da';
+                    statusMsg.style.color = '#721c24';
+                    statusMsg.style.border = '1px solid #f5c6cb';
+                    statusMsg.textContent = data.message || 'Login request was denied by the active device.';
+                    setTimeout(() => {
+                        window.location.href = "{% url 'login' %}";
+                    }, 2500);
+                } else if (data.status === 'EXPIRED') {
+                    clearInterval(pollInterval);
+                    clearInterval(timerInterval);
+                    statusSpinner.style.display = 'none';
+                    statusMsg.style.display = 'block';
+                    statusMsg.style.backgroundColor = '#fef9e7';
+                    statusMsg.style.color = '#856404';
+                    statusMsg.style.border = '1px solid #ffeeba';
+                    statusMsg.textContent = data.message || 'Authorization timed out after 1 minute.';
+                    setTimeout(() => {
+                        window.location.href = "{% url 'login' %}";
+                    }, 2500);
+                }
+            })
+            .catch(err => {
+                console.error("Error polling approval status:", err);
+            });
+        }
+
+        updateDisplay();
+        timerInterval = setInterval(() => {
+            if (remainingSeconds > 0) {
+                remainingSeconds--;
+                updateDisplay();
+            } else {
+                clearInterval(timerInterval);
+                checkStatus();
+            }
+        }, 1000);
+
+        // Poll server every 2 seconds
+        pollInterval = setInterval(checkStatus, 2000);
+    })();
+</script>
+{% endblock %}

@@ -7,14 +7,7 @@
         </a>
     </div>
 
-    {% if messages %}
-        {% for message in messages %}
-            <p style="padding: 12px; border-radius: 5px; background-color: {% if message.tags == 'error' %}#f8d7da; color: #721c24;{% elif message.tags == 'warning' %}#fff3cd; color: #856404;{% else %}#d4edda; color: #155724;{% endif %} margin-bottom: 20px;">
-                {{ message }}
-            </p>
-        {% endfor %}
-    {% endif %}
-    
+
     <h3 style="color: #003366; border-bottom: 2px solid #FFD700; padding-bottom: 8px;">Available Quizzes</h3>
     <table>
         <thead>

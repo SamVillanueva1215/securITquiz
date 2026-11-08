@@ -2,10 +2,20 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+from pathlib import Path
 
 
 def main():
     """Run administrative tasks."""
+    base_dir = Path(__file__).resolve().parent
+    sub_project = base_dir / 'securITquiz'
+
+    # If invoked from repository root, switch context to securITquiz subproject
+    if sub_project.exists() and (sub_project / 'manage.py').exists():
+        os.chdir(sub_project)
+        if str(sub_project) not in sys.path:
+            sys.path.insert(0, str(sub_project))
+
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'securITquiz.settings')
     try:
         from django.core.management import execute_from_command_line

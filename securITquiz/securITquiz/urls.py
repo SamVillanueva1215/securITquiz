@@ -14,11 +14,16 @@ urlpatterns = [
     # Home
     path('', views.home, name='home'),
 
-    # Shared Authentication & Single Active Session Device Switching
+    # Shared Authentication & Mutual Two-Device Authorization
     path('register/', views.register, name='register'),
     path('login/', views.user_login, name='login'),
+    path('login/waiting-approval/', views.waiting_for_approval, name='waiting_for_approval'),
+    path('login/check-approval-status/', views.check_approval_status, name='check_approval_status'),
+    path('login/cancel-authorization/', views.cancel_authorization_request, name='cancel_authorization_request'),
     path('login/confirm-device-switch/', views.confirm_device_switch, name='confirm_device_switch'),
     path('login/cancel-device-switch/', views.cancel_device_switch, name='cancel_device_switch'),
+    path('auth/pending-device-request/', views.pending_device_request, name='pending_device_request'),
+    path('auth/respond-device-request/', views.respond_device_request, name='respond_device_request'),
     path('logout/', views.user_logout, name='logout'),
 
     # Student Workflow

@@ -134,6 +134,81 @@ def notify_students_results_released(quiz):
     return True
 
 
+def notify_device_auth_requested(user, requesting_ip, expires_at=None):
+    """
+    Notifies the account owner that a new device is attempting to log in and requires authorization.
+    """
+    if not user or not user.email:
+        return False
+
+    expiry_info = f"within 60 seconds (by {expires_at.strftime('%Y-%m-%d %H:%M:%S UTC')})" if expires_at else "within 60 seconds"
+    subject = "Action Required: New Device Login Authorization Request"
+    body = (
+        f"Hello {user.first_name or user.username},\n\n"
+        f"A login attempt was initiated for your securITquiz account from a new device/browser.\n\n"
+        f"Request Details:\n"
+        f"- Requesting IP Address: {requesting_ip}\n"
+        f"- Action Required: Log into your currently active device and choose Approve or Deny {expiry_info}.\n\n"
+        f"If you did not initiate this login attempt, please Deny the request or change your password immediately.\n\n"
+        f"securITquiz Security Operations"
+    )
+    return send_safe_email(subject, body, [user.email])
+
+
+def notify_device_auth_approved(user, requesting_ip, approver_ip=None):
+    """
+    Notifies the account owner that a new device login was approved and session authority transferred.
+    """
+    if not user or not user.email:
+        return False
+
+    subject = "Security Notice: Device Login Approved & Authority Transferred"
+    body = (
+        f"Hello {user.first_name or user.username},\n\n"
+        f"A login request from device IP {requesting_ip} was successfully approved by your active session"
+        f"{f' (IP {approver_ip})' if approver_ip else ''}.\n\n"
+        f"Account session authority has been transferred to the new device. Your previous device session was terminated.\n\n"
+        f"If you did not authorize this transfer, your account may be compromised. Please contact support immediately.\n\n"
+        f"securITquiz Security Operations"
+    )
+    return send_safe_email(subject, body, [user.email])
+
+
+def notify_device_auth_denied(user, requesting_ip, denier_ip=None):
+    """
+    Notifies the account owner that an unauthorized device login request was denied.
+    """
+    if not user or not user.email:
+        return False
+
+    subject = "Security Alert: Device Login Request Denied"
+    body = (
+        f"Hello {user.first_name or user.username},\n\n"
+        f"A login request for your account originating from IP {requesting_ip} was DENIED"
+        f"{f' by active session IP {denier_ip}' if denier_ip else ''}.\n\n"
+        f"Your current session remains active and secure. The unauthorized device was blocked from accessing your account.\n\n"
+        f"securITquiz Security Operations"
+    )
+    return send_safe_email(subject, body, [user.email])
+
+
+def notify_device_auth_expired(user, requesting_ip):
+    """
+    Notifies the account owner that an unapproved device authorization request timed out.
+    """
+    if not user or not user.email:
+        return False
+
+    subject = "Security Notice: Device Authorization Request Timed Out"
+    body = (
+        f"Hello {user.first_name or user.username},\n\n"
+        f"A pending device authorization request from IP {requesting_ip} has expired after 60 seconds without approval.\n\n"
+        f"The pending login was automatically cancelled and no access was granted.\n\n"
+        f"securITquiz Security Operations"
+    )
+    return send_safe_email(subject, body, [user.email])
+
+
 def notify_suspicious_security_event(user, ip_address, event_type, details):
     """
     Alerts the user or administrator when a suspicious authentication or security event occurs.
