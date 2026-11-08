@@ -1,40 +1,73 @@
 {% extends 'quiz/base.html' %}
 {% block content %}
-    <h2 style="color: #003366;">Instructor Dashboard</h2>
-
-    {% if messages %}
-        {% for message in messages %}
-            <p style="padding: 12px; border-radius: 5px; background-color: {% if message.tags == 'error' %}#f8d7da; color: #721c24;{% else %}#d4edda; color: #155724;{% endif %} margin-bottom: 20px;">
-                {{ message }}
-            </p>
-        {% endfor %}
-    {% endif %}
-
-    <a href="{% url 'create_quiz' %}" class="btn" style="margin-bottom: 20px;">+ Create New Quiz</a>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px;">
+        <h2 style="color: #003366; margin: 0;">Instructor Dashboard</h2>
+        <div style="display: flex; gap: 10px;">
+            <a href="{% url 'create_quiz' %}" class="btn">+ Create New Quiz</a>
+            <a href="{% url 'security_logs' %}" class="btn btn-secondary">🛡️ Security Logs</a>
+        </div>
+    </div>
     
-    <h3>Managed Quizzes</h3>
+    <h3 style="color: #003366; border-bottom: 2px solid #FFD700; padding-bottom: 8px;">Managed Quizzes</h3>
     <table>
         <thead>
             <tr>
                 <th>Title</th>
                 <th>Access PIN</th>
-                <th>Time Limit</th>
+                <th>Time</th>
+                <th>Pass Req.</th>
+                <th>Status</th>
+                <th>Results</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for quiz in quizzes %}
             <tr>
-                <td>{{ quiz.title }}</td>
-                <td><code>{{ quiz.access_pin }}</code></td>
-                <td>{{ quiz.time_limit_minutes }} mins</td>
                 <td>
-                    <a href="#" class="btn" style="padding: 5px 10px; font-size: 12px;">Edit</a>
-                    <a href="{% url 'instructor_quiz_results' quiz.id %}" class="btn" style="padding: 5px 10px; font-size: 12px; background-color: #8b0000;">Results</a>
+                    <strong>{{ quiz.title }}</strong><br>
+                    <span style="font-size: 11px; color: #777;">Deadline: {{ quiz.deadline|date:"M d, Y h:i A" }}</span>
+                </td>
+                <td><code style="font-size: 14px; font-weight: bold; color: #003366; background: #eef5fc; padding: 3px 6px; border-radius: 3px;">{{ quiz.access_pin }}</code></td>
+                <td>{{ quiz.time_limit_minutes }}m</td>
+                <td>{{ quiz.passing_percentage|floatformat:0 }}%</td>
+                <td>
+                    <form method="POST" action="{% url 'toggle_quiz_status' quiz.id %}" style="display: inline;">
+                        {% csrf_token %}
+                        {% if quiz.is_active %}
+                            <button type="submit" class="btn" style="padding: 4px 8px; font-size: 11px; background-color: #27ae60;" title="Click to deactivate quiz">
+                                ✓ Active
+                            </button>
+                        {% else %}
+                            <button type="submit" class="btn" style="padding: 4px 8px; font-size: 11px; background-color: #7f8c8d;" title="Click to activate quiz">
+                                ✕ Inactive
+                            </button>
+                        {% endif %}
+                    </form>
+                </td>
+                <td>
+                    <form method="POST" action="{% url 'toggle_quiz_results' quiz.id %}" style="display: inline;">
+                        {% csrf_token %}
+                        {% if quiz.results_released %}
+                            <button type="submit" class="btn" style="padding: 4px 8px; font-size: 11px; background-color: #2980b9;" title="Click to withhold results">
+                                📢 Released
+                            </button>
+                        {% else %}
+                            <button type="submit" class="btn btn-gold" style="padding: 4px 8px; font-size: 11px;" title="Click to release results to students">
+                                🔒 Hidden
+                            </button>
+                        {% endif %}
+                    </form>
+                </td>
+                <td>
+                    <div style="display: flex; gap: 5px;">
+                        <a href="{% url 'edit_quiz' quiz.id %}" class="btn" style="padding: 5px 10px; font-size: 12px;">Edit</a>
+                        <a href="{% url 'instructor_quiz_results' quiz.id %}" class="btn" style="padding: 5px 10px; font-size: 12px; background-color: #003366; color: #FFD700;">Results</a>
+                    </div>
                 </td>
             </tr>
             {% empty %}
-            <tr><td colspan="4">No quizzes created yet.</td></tr>
+            <tr><td colspan="7" style="text-align: center; color: #888; padding: 25px;">No quizzes created yet. Click "+ Create New Quiz" to start.</td></tr>
             {% endfor %}
         </tbody>
     </table>

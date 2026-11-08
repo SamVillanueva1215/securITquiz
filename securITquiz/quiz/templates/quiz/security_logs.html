@@ -1,0 +1,117 @@
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+<div style="max-width: 950px; margin: 0 auto;">
+
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px;">
+        <div>
+            <h2 style="color: #003366; margin: 0 0 5px 0;">🛡️ Security Audit Logs & Monitoring</h2>
+            <span style="font-size: 13px; color: #666;">Centralized immutable audit trail for authentication, exams, and cryptography</span>
+        </div>
+        <div>
+            <a href="{% url 'instructor_dashboard' %}" class="btn btn-secondary">
+                ← Back to Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Security Summary Cards -->
+    <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 22px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+        <h3 style="color: #003366; margin: 0 0 15px 0; font-size: 17px; border-bottom: 2px solid #FFD700; padding-bottom: 8px;">
+            System Security Event Log (Most Recent 200 Entries)
+        </h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp (UTC)</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>IP Address</th>
+                    <th>Status</th>
+                    <th>Event Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in audit_records %}
+                <tr>
+                    <td style="font-size: 12px; color: #555; white-space: nowrap;">
+                        {{ record.timestamp|date:"Y-m-d H:i:s" }}
+                    </td>
+                    <td>
+                        <strong>{{ record.actor_username }}</strong>
+                    </td>
+                    <td>
+                        <span class="badge {% if 'FAIL' in record.action or 'BLOCKED' in record.action %}badge-danger{% elif 'CONFIRM' in record.action or 'EXAM' in record.action %}badge-info{% elif 'SUCCESS' in record.action or 'CREATED' in record.action %}badge-success{% else %}badge-warning{% endif %}" style="font-size: 10px;">
+                            {{ record.action }}
+                        </span>
+                    </td>
+                    <td><code>{{ record.ip_address|default:"127.0.0.1" }}</code></td>
+                    <td>
+                        {% if record.status == 'SUCCESS' or record.status == 'VALID' or record.status == 'CONFIRMED' %}
+                            <span class="badge badge-success">{{ record.status }}</span>
+                        {% elif record.status == 'FAILED' or record.status == 'TAMPER_ALERT' or record.status == 'BLOCKED' %}
+                            <span class="badge badge-danger">{{ record.status }}</span>
+                        {% else %}
+                            <span class="badge badge-info">{{ record.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-size: 12px; color: #444;">
+                        {{ record.details|truncatechars:100 }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align: center; color: #888; padding: 25px;">
+                        No audit records currently available.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Login Activity Monitoring Table -->
+    <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 22px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+        <h3 style="color: #003366; margin: 0 0 15px 0; font-size: 17px; border-bottom: 2px solid #003366; padding-bottom: 8px;">
+            Authentication Activity Log
+        </h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp (UTC)</th>
+                    <th>Username Attempted</th>
+                    <th>Action</th>
+                    <th>IP Address</th>
+                    <th>Result</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in security_records %}
+                <tr>
+                    <td style="font-size: 12px; color: #555;">{{ log.timestamp|date:"Y-m-d H:i:s" }}</td>
+                    <td><strong>{{ log.username_attempted }}</strong></td>
+                    <td><span class="badge badge-info" style="font-size: 10px;">{{ log.action }}</span></td>
+                    <td><code>{{ log.ip_address }}</code></td>
+                    <td>
+                        {% if log.is_success %}
+                            <span class="badge badge-success">✓ Authorized</span>
+                        {% else %}
+                            <span class="badge badge-danger">✗ Denied / Flagged</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #888; padding: 20px;">
+                        No login activity recorded yet.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+</div>
+{% endblock %}

@@ -120,9 +120,29 @@ def generate_secure_pin(length=6):
 
 
 class QuizForm(forms.ModelForm):
+    passing_percentage = forms.FloatField(
+        required=False,
+        initial=50.0,
+        widget=forms.NumberInput(attrs={
+            'min': 0,
+            'max': 100,
+            'step': 1,
+            'placeholder': '50',
+            'style': 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'
+        })
+    )
+
     class Meta:
         model = Quiz
-        fields = ['title', 'description', 'time_limit_minutes', 'deadline', 'access_pin']
+        fields = [
+            'title',
+            'description',
+            'time_limit_minutes',
+            'deadline',
+            'access_pin',
+            'passing_percentage',
+            'is_active',
+        ]
         widgets = {
             'title': forms.TextInput(attrs={
                 'placeholder': 'e.g. Midterm Cryptography Exam',
@@ -147,6 +167,16 @@ class QuizForm(forms.ModelForm):
                 'placeholder': '6-character PIN',
                 'style': 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; text-transform: uppercase; font-family: monospace; font-size: 16px; letter-spacing: 2px;'
             }),
+            'passing_percentage': forms.NumberInput(attrs={
+                'min': 0,
+                'max': 100,
+                'step': 1,
+                'placeholder': '50',
+                'style': 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'
+            }),
+            'is_active': forms.CheckboxInput(attrs={
+                'style': 'margin-right: 8px; transform: scale(1.3);'
+            }),
         }
 
     def clean_access_pin(self):
@@ -167,8 +197,11 @@ class QuizForm(forms.ModelForm):
 
     def clean_deadline(self):
         deadline = self.cleaned_data.get('deadline')
-        if deadline and deadline <= timezone.now():
-            raise forms.ValidationError("The deadline must be set to a future date and time.")
+        if deadline:
+            if self.instance and self.instance.pk and self.instance.deadline == deadline:
+                return deadline
+            if deadline <= timezone.now():
+                raise forms.ValidationError("The deadline must be set to a future date and time.")
         return deadline
 
     def clean_time_limit_minutes(self):
@@ -176,6 +209,16 @@ class QuizForm(forms.ModelForm):
         if time_limit is None or time_limit < 1:
             raise forms.ValidationError("Time limit must be at least 1 minute.")
         return time_limit
+
+    def clean_passing_percentage(self):
+        pct = self.cleaned_data.get('passing_percentage')
+        if pct is None:
+            if self.instance and self.instance.pk and getattr(self.instance, 'passing_percentage', None) is not None:
+                return self.instance.passing_percentage
+            return 50.0
+        if pct < 0.0 or pct > 100.0:
+            raise forms.ValidationError("Passing percentage must be between 0 and 100.")
+        return pct
 
 
 class PinVerificationForm(forms.Form):

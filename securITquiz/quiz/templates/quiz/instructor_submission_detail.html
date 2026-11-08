@@ -103,13 +103,23 @@
         </div>
 
         <p style="font-size: 13px; color: #555; line-height: 1.5; margin-top: 0;">
-            The student's score, username, quiz ID, and submission timestamp were verified against the system's public key using <strong>Digital Signature Algorithm (DSA)</strong> with SHA-256 (FIPS 186-3).
+            The student's score, username, quiz ID, submitted answers, and timestamp were verified against the system's public key using <strong>Digital Signature Algorithm (DSA)</strong> with SHA-256 (FIPS 186-3).
             {% if is_dsa_valid %}
-                This mathematically proves the grade integrity and guarantees that no post-submission alteration took place.
+                This mathematically proves grade integrity and guarantees that no post-submission alteration took place.
             {% else %}
                 Warning: The signature hash does not match the submission parameters.
             {% endif %}
         </p>
+
+        <div style="margin-top: 10px; font-size: 13px; color: #444;">
+            <strong style="color: #003366;">Signature Version:</strong>
+            <span style="font-weight: bold; background: #eef2f7; padding: 2px 6px; border-radius: 3px;">Version {{ submission.signature_version }}</span>
+            {% if submission.signature_version == 2 %}
+                <span style="color: #155724; margin-left: 5px; font-size: 12px;">&#x2713; Cryptographically protects submitted answers, score, and timestamp</span>
+            {% else %}
+                <span style="color: #666; margin-left: 5px; font-size: 12px;">(Legacy signature: protects score and timestamp)</span>
+            {% endif %}
+        </div>
 
         <div style="margin-top: 12px;">
             <label style="display: block; font-size: 12px; font-weight: bold; color: #003366; margin-bottom: 4px;">
@@ -119,49 +129,95 @@
         </div>
     </div>
 
-    <!-- Quiz Questions & Answer Key Card -->
+    <!-- Quiz Questions & Student Answer Review Card -->
     <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
         <h3 style="color: #003366; margin-top: 0; border-bottom: 2px solid #FFD700; padding-bottom: 8px; font-size: 16px;">
-            Quiz Questions & Answer Key
+            Student Answer Evaluation &amp; Question Breakdown
         </h3>
 
-        {% for q in questions %}
-        <div style="background: #fafbfd; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        {% for item in question_reviews %}
+        <div style="background: #fafbfd; border: 1px solid {% if item.is_correct %}#c3e6cb{% else %}#f5c6cb{% endif %}; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <span style="font-weight: bold; color: #003366; font-size: 14px;">
                     Question #{{ forloop.counter }}
                 </span>
-                <span style="font-size: 11px; background: #e0e6ed; padding: 2px 8px; border-radius: 4px; font-weight: bold; color: #333;">
-                    {% if q.question_type == 'MCQ' %}Multiple Choice{% else %}True / False{% endif %}
-                </span>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <span style="font-size: 11px; background: #e0e6ed; padding: 2px 8px; border-radius: 4px; font-weight: bold; color: #333;">
+                        {% if item.question.question_type == 'MCQ' %}Multiple Choice{% elif item.question.question_type == 'TF' %}True / False{% else %}Identification{% endif %}
+                    </span>
+                    {% if item.is_correct %}
+                        <span style="background: #d4edda; color: #155724; font-size: 12px; font-weight: bold; padding: 2px 8px; border-radius: 4px; border: 1px solid #c3e6cb;">
+                            &#x2713; Correct (1/1)
+                        </span>
+                    {% else %}
+                        <span style="background: #f8d7da; color: #721c24; font-size: 12px; font-weight: bold; padding: 2px 8px; border-radius: 4px; border: 1px solid #f5c6cb;">
+                            &#x2717; Incorrect (0/1)
+                        </span>
+                    {% endif %}
+                </div>
             </div>
 
             <p style="font-weight: 600; color: #222; margin: 6px 0 12px; font-size: 15px;">
-                {{ q.question_text }}
+                {{ item.question.question_text }}
             </p>
 
-            {% if q.question_type == 'MCQ' %}
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
-                <div style="padding: 6px 10px; border-radius: 4px; {% if q.correct_answer == 'A' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
-                    <strong>A.</strong> {{ q.option_a }} {% if q.correct_answer == 'A' %}&#x2713; (Correct){% endif %}
+            <!-- Student Answer vs Expected -->
+            <div style="background: white; border: 1px solid #e2e8f0; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 13px;">
+                <div style="margin-bottom: 6px;">
+                    <strong style="color: #555;">Student Submitted Answer:</strong>
+                    {% if item.student_answer %}
+                        <span style="font-weight: bold; color: {% if item.is_correct %}#155724{% else %}#721c24{% endif %};">
+                            {{ item.student_answer }}
+                            {% if item.question.question_type == 'MCQ' %}
+                                {% if item.student_answer == 'A' %}- {{ item.question.option_a }}
+                                {% elif item.student_answer == 'B' %}- {{ item.question.option_b }}
+                                {% elif item.student_answer == 'C' %}- {{ item.question.option_c }}
+                                {% elif item.student_answer == 'D' %}- {{ item.question.option_d }}
+                                {% endif %}
+                            {% endif %}
+                        </span>
+                    {% else %}
+                        <span style="color: #888; font-style: italic;">No answer submitted</span>
+                    {% endif %}
                 </div>
-                <div style="padding: 6px 10px; border-radius: 4px; {% if q.correct_answer == 'B' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
-                    <strong>B.</strong> {{ q.option_b }} {% if q.correct_answer == 'B' %}&#x2713; (Correct){% endif %}
-                </div>
-                <div style="padding: 6px 10px; border-radius: 4px; {% if q.correct_answer == 'C' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
-                    <strong>C.</strong> {{ q.option_c }} {% if q.correct_answer == 'C' %}&#x2713; (Correct){% endif %}
-                </div>
-                <div style="padding: 6px 10px; border-radius: 4px; {% if q.correct_answer == 'D' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
-                    <strong>D.</strong> {{ q.option_d }} {% if q.correct_answer == 'D' %}&#x2713; (Correct){% endif %}
+
+                <div>
+                    <strong style="color: #555;">Expected Correct Answer:</strong>
+                    <span style="font-weight: bold; color: #003366;">
+                        {{ item.question.correct_answer }}
+                        {% if item.question.question_type == 'MCQ' %}
+                            {% if item.question.correct_answer == 'A' %}- {{ item.question.option_a }}
+                            {% elif item.question.correct_answer == 'B' %}- {{ item.question.option_b }}
+                            {% elif item.question.correct_answer == 'C' %}- {{ item.question.option_c }}
+                            {% elif item.question.correct_answer == 'D' %}- {{ item.question.option_d }}
+                            {% endif %}
+                        {% endif %}
+                    </span>
                 </div>
             </div>
-            {% elif q.question_type == 'TF' %}
-            <div style="display: flex; gap: 15px; font-size: 13px;">
-                <div style="padding: 6px 14px; border-radius: 4px; {% if q.correct_answer == 'True' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
-                    True {% if q.correct_answer == 'True' %}&#x2713; (Correct Answer){% endif %}
+
+            {% if item.question.question_type == 'MCQ' %}
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px;">
+                <div style="padding: 6px 10px; border-radius: 4px; {% if item.question.correct_answer == 'A' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
+                    <strong>A.</strong> {{ item.question.option_a }} {% if item.question.correct_answer == 'A' %}&#x2713; (Answer Key){% endif %}
                 </div>
-                <div style="padding: 6px 14px; border-radius: 4px; {% if q.correct_answer == 'False' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
-                    False {% if q.correct_answer == 'False' %}&#x2713; (Correct Answer){% endif %}
+                <div style="padding: 6px 10px; border-radius: 4px; {% if item.question.correct_answer == 'B' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
+                    <strong>B.</strong> {{ item.question.option_b }} {% if item.question.correct_answer == 'B' %}&#x2713; (Answer Key){% endif %}
+                </div>
+                <div style="padding: 6px 10px; border-radius: 4px; {% if item.question.correct_answer == 'C' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
+                    <strong>C.</strong> {{ item.question.option_c }} {% if item.question.correct_answer == 'C' %}&#x2713; (Answer Key){% endif %}
+                </div>
+                <div style="padding: 6px 10px; border-radius: 4px; {% if item.question.correct_answer == 'D' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
+                    <strong>D.</strong> {{ item.question.option_d }} {% if item.question.correct_answer == 'D' %}&#x2713; (Answer Key){% endif %}
+                </div>
+            </div>
+            {% elif item.question.question_type == 'TF' %}
+            <div style="display: flex; gap: 15px; font-size: 13px;">
+                <div style="padding: 6px 14px; border-radius: 4px; {% if item.question.correct_answer == 'True' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
+                    True {% if item.question.correct_answer == 'True' %}&#x2713; (Answer Key){% endif %}
+                </div>
+                <div style="padding: 6px 14px; border-radius: 4px; {% if item.question.correct_answer == 'False' %}background: #d4edda; border: 1px solid #28a745; font-weight: bold; color: #155724;{% else %}background: white; border: 1px solid #e2e8f0;{% endif %}">
+                    False {% if item.question.correct_answer == 'False' %}&#x2713; (Answer Key){% endif %}
                 </div>
             </div>
             {% endif %}

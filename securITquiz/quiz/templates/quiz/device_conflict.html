@@ -1,0 +1,50 @@
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 0 auto; text-align: center; padding: 20px 0;">
+
+    <div style="font-size: 50px; color: #c0392b; margin-bottom: 15px;">⚠️</div>
+
+    <h2 style="color: #003366; margin-bottom: 10px;">Active Session Detected</h2>
+
+    <p style="font-size: 16px; color: #555; line-height: 1.6; margin-bottom: 25px;">
+        This account (<strong>{{ account_username }}</strong>) is currently logged in on another device or browser.
+    </p>
+
+    <div style="background-color: #fff9e6; border-left: 4px solid #f1c40f; padding: 15px; text-align: left; margin-bottom: 30px; border-radius: 4px;">
+        <h4 style="margin: 0 0 8px 0; color: #b7950b;">Single Active Session Policy</h4>
+        <p style="margin: 0; font-size: 14px; color: #666;">
+            To ensure academic integrity and account security, securITquiz allows only <strong>one active session per account</strong> at any time.
+        </p>
+        <ul style="margin: 10px 0 0 20px; padding: 0; font-size: 13px; color: #666;">
+            <li>Existing session IP: <code>{{ existing_ip }}</code></li>
+            <li>Last recorded activity: {{ last_active|date:"M d, Y H:i:s" }} UTC</li>
+        </ul>
+    </div>
+
+    <p style="font-weight: bold; color: #003366; font-size: 16px; margin-bottom: 25px;">
+        Would you like to continue here and end the existing session?
+    </p>
+
+    <div style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+
+        <!-- Confirm Device Switch -->
+        <form method="POST" action="{% url 'confirm_device_switch' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn" style="background-color: #003366; color: #FFD700; padding: 12px 24px; font-size: 15px;">
+                ✓ Continue Here (End Other Session)
+            </button>
+        </form>
+
+        <!-- Cancel Device Switch -->
+        <form method="POST" action="{% url 'cancel_device_switch' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-secondary" style="padding: 12px 24px; font-size: 15px;">
+                ✕ Cancel (Keep Existing Session)
+            </button>
+        </form>
+
+    </div>
+
+</div>
+{% endblock %}

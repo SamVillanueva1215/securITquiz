@@ -1,0 +1,472 @@
+{% extends 'quiz/base.html' %}
+
+{% block content %}
+<div style="max-width: 850px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+        <h2 style="color: #003366; margin: 0;">Edit Quiz: {{ quiz.title }}</h2>
+        <a href="{% url 'instructor_dashboard' %}" class="btn" style="background-color: #6c757d; font-size: 13px; padding: 6px 14px;">
+            &larr; Back to Dashboard
+        </a>
+    </div>
+    <p style="color: #666; margin-top: 5px; margin-bottom: 25px;">
+        Update quiz settings and assessment questions. Existing student submissions and access PIN will be safely preserved.
+    </p>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div style="padding: 12px 16px; border-radius: 5px; margin-bottom: 20px; font-weight: 500;
+                        background-color: {% if message.tags == 'error' %}#f8d7da; color: #721c24; border: 1px solid #f5c6cb;{% else %}#d4edda; color: #155724; border: 1px solid #c3e6cb;{% endif %}">
+                {{ message }}
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    {% if form.non_field_errors %}
+        {% for error in form.non_field_errors %}
+            <div style="padding: 12px 16px; background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 5px; margin-bottom: 20px;">
+                {{ error }}
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <form method="POST" id="edit-quiz-form">
+        {% csrf_token %}
+
+        <!-- Quiz Metadata Card -->
+        <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+            <h3 style="color: #003366; margin-top: 0; border-bottom: 2px solid #FFD700; padding-bottom: 8px; font-size: 18px;">
+                1. Quiz Settings
+            </h3>
+
+            <!-- Title -->
+            <div style="margin-bottom: 18px;">
+                <label for="{{ form.title.id_for_label }}" style="display: block; font-weight: bold; margin-bottom: 6px; color: #003366;">
+                    Quiz Title <span style="color: red;">*</span>
+                </label>
+                {{ form.title }}
+                {% for error in form.title.errors %}
+                    <p style="color: red; font-size: 13px; margin: 4px 0 0;">{{ error }}</p>
+                {% endfor %}
+            </div>
+
+            <!-- Description -->
+            <div style="margin-bottom: 18px;">
+                <label for="{{ form.description.id_for_label }}" style="display: block; font-weight: bold; margin-bottom: 6px; color: #003366;">
+                    Instructions / Description
+                </label>
+                {{ form.description }}
+                {% for error in form.description.errors %}
+                    <p style="color: red; font-size: 13px; margin: 4px 0 0;">{{ error }}</p>
+                {% endfor %}
+            </div>
+
+            <!-- Time Limit & Deadline Grid -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 18px;">
+                <div>
+                    <label for="{{ form.time_limit_minutes.id_for_label }}" style="display: block; font-weight: bold; margin-bottom: 6px; color: #003366;">
+                        Time Limit (Minutes) <span style="color: red;">*</span>
+                    </label>
+                    {{ form.time_limit_minutes }}
+                    {% for error in form.time_limit_minutes.errors %}
+                        <p style="color: red; font-size: 13px; margin: 4px 0 0;">{{ error }}</p>
+                    {% endfor %}
+                </div>
+
+                <div>
+                    <label for="{{ form.deadline.id_for_label }}" style="display: block; font-weight: bold; margin-bottom: 6px; color: #003366;">
+                        Quiz Deadline <span style="color: red;">*</span>
+                    </label>
+                    {{ form.deadline }}
+                    {% for error in form.deadline.errors %}
+                        <p style="color: red; font-size: 13px; margin: 4px 0 0;">{{ error }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+
+            <!-- Passing Percentage & Active Status -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 18px; margin-bottom: 18px;">
+                <div>
+                    <label for="{{ form.passing_percentage.id_for_label }}" style="display: block; font-weight: bold; margin-bottom: 6px; color: #003366;">
+                        Passing Percentage (%) <span style="color: red;">*</span>
+                    </label>
+                    {{ form.passing_percentage }}
+                    {% for error in form.passing_percentage.errors %}
+                        <p style="color: red; font-size: 13px; margin: 4px 0 0;">{{ error }}</p>
+                    {% endfor %}
+                </div>
+                <div style="display: flex; align-items: center; padding-top: 25px;">
+                    <label style="display: flex; align-items: center; cursor: pointer; font-weight: bold; color: #003366;">
+                        {{ form.is_active }}
+                        Quiz Active (Visible to students)
+                    </label>
+                </div>
+            </div>
+
+            <!-- Access PIN -->
+            <div>
+                <label for="{{ form.access_pin.id_for_label }}" style="display: block; font-weight: bold; margin-bottom: 6px; color: #003366;">
+                    Access PIN (6 Alphanumeric Characters) <span style="color: red;">*</span>
+                </label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <div style="flex-grow: 1;">
+                        {{ form.access_pin }}
+                    </div>
+                    <button type="button" id="btn-generate-pin" class="btn" style="white-space: nowrap; padding: 10px 14px; font-size: 13px; background-color: #003366;" title="Regenerate a new 6-character PIN if needed">
+                        &#x21bb; Regenerate PIN
+                    </button>
+                </div>
+                <small style="color: #666; display: block; margin-top: 5px;">
+                    The current Access PIN is preserved. Students will need this PIN to enter the quiz.
+                </small>
+                {% for error in form.access_pin.errors %}
+                    <p style="color: red; font-size: 13px; margin: 4px 0 0;">{{ error }}</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Questions Card -->
+        <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #FFD700; padding-bottom: 8px; margin-bottom: 20px;">
+                <h3 style="color: #003366; margin: 0; font-size: 18px;">
+                    2. Assessment Questions <span style="color: red;">*</span>
+                </h3>
+                <span style="font-size: 13px; color: #666; font-style: italic;">
+                    At least 1 question is required
+                </span>
+            </div>
+
+            <!-- Questions Container -->
+            <div id="questions-container">
+                <!-- Question cards will be dynamically rendered here -->
+            </div>
+
+            <!-- Add Question Button -->
+            <div style="margin-top: 20px; text-align: center;">
+                <button type="button" id="btn-add-question" class="btn" style="background-color: #f4f7f6; color: #003366; border: 2px dashed #003366; width: 100%; padding: 12px; font-size: 15px;">
+                    + Add Another Question
+                </button>
+            </div>
+        </div>
+
+        <!-- Hidden input storing serialized question JSON -->
+        <input type="hidden" name="questions_data" id="questions_data_input" value="">
+
+        <!-- Form Actions -->
+        <div style="display: flex; gap: 15px; align-items: center; justify-content: flex-end; padding-top: 10px;">
+            <a href="{% url 'instructor_dashboard' %}" class="btn" style="background-color: #6c757d;">
+                Cancel
+            </a>
+            <button type="submit" id="btn-submit-quiz" class="btn" style="padding: 12px 28px; font-size: 16px;">
+                Save Changes
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+    // Cryptographically secure client-side PIN generator
+    function generateSecurePin() {
+        const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        const randomValues = new Uint8Array(6);
+        window.crypto.getRandomValues(randomValues);
+        let pin = '';
+        for (let i = 0; i < 6; i++) {
+            pin += charset[randomValues[i] % charset.length];
+        }
+        return pin;
+    }
+
+    document.getElementById('btn-generate-pin').addEventListener('click', function() {
+        if (confirm('Are you sure you want to generate a new Access PIN? Students will need the new PIN to access the quiz.')) {
+            const pinInput = document.getElementById('id_access_pin');
+            if (pinInput) {
+                pinInput.value = generateSecurePin();
+            }
+        }
+    });
+
+    // Existing questions loaded from server
+    const initialQuestions = {{ existing_questions_json|safe }};
+
+    let questions = [];
+
+    if (Array.isArray(initialQuestions) && initialQuestions.length > 0) {
+        questions = initialQuestions;
+    } else {
+        questions = [{
+            id: null,
+            question_text: '',
+            question_type: 'MCQ',
+            option_a: '',
+            option_b: '',
+            option_c: '',
+            option_d: '',
+            correct_answer: 'A'
+        }];
+    }
+
+    const container = document.getElementById('questions-container');
+
+    function renderQuestions() {
+        container.innerHTML = '';
+
+        questions.forEach((q, index) => {
+            const card = document.createElement('div');
+            card.className = 'question-card';
+            card.style.cssText = 'background: #fafbfd; border: 1px solid #d9e2ec; border-radius: 6px; padding: 20px; margin-bottom: 20px;';
+
+            const isMCQ = q.question_type === 'MCQ';
+            const isTF = q.question_type === 'TF';
+            const isID = q.question_type === 'ID';
+
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-weight: bold; color: #003366; font-size: 16px;">
+                            Question #${index + 1}
+                        </span>
+                        ${q.id ? `<span style="font-size: 11px; background: #eef2f7; color: #555; padding: 2px 6px; border-radius: 3px;">ID: ${q.id}</span>` : '<span style="font-size: 11px; background: #fff3cd; color: #856404; padding: 2px 6px; border-radius: 3px;">New</span>'}
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <label style="font-size: 13px; font-weight: bold; color: #555;">Type:</label>
+                        <select class="q-type-select" data-index="${index}" style="padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-weight: bold; color: #003366;">
+                            <option value="MCQ" ${isMCQ ? 'selected' : ''}>Multiple Choice</option>
+                            <option value="TF" ${isTF ? 'selected' : ''}>True / False</option>
+                            <option value="ID" ${isID ? 'selected' : ''}>Identification</option>
+                        </select>
+                        ${questions.length > 1 ? `
+                            <button type="button" class="btn-remove-question" data-index="${index}" style="background: #dc3545; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">
+                                Remove
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- Question Text -->
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 14px; color: #003366;">
+                        Question Text <span style="color: red;">*</span>
+                    </label>
+                    <textarea class="q-text-input" data-index="${index}" rows="2" placeholder="Enter your question here..." style="width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">${q.question_text || ''}</textarea>
+                </div>
+
+                <!-- Dynamic MCQ Options -->
+                <div class="mcq-options-container" style="${isMCQ ? '' : 'display: none;'}">
+                    <p style="font-weight: bold; margin-bottom: 10px; font-size: 13px; color: #555;">
+                        Provide all four options and select the correct answer:
+                    </p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div style="display: flex; align-items: center; gap: 8px; background: white; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px;">
+                            <input type="radio" name="correct_mcq_${index}" value="A" class="q-correct-mcq" data-index="${index}" ${q.correct_answer === 'A' ? 'checked' : ''} title="Mark as correct">
+                            <strong style="color: #003366; min-width: 18px;">A.</strong>
+                            <input type="text" class="q-opt-a" data-index="${index}" value="${q.option_a || ''}" placeholder="Option A" style="flex-grow: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; background: white; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px;">
+                            <input type="radio" name="correct_mcq_${index}" value="B" class="q-correct-mcq" data-index="${index}" ${q.correct_answer === 'B' ? 'checked' : ''} title="Mark as correct">
+                            <strong style="color: #003366; min-width: 18px;">B.</strong>
+                            <input type="text" class="q-opt-b" data-index="${index}" value="${q.option_b || ''}" placeholder="Option B" style="flex-grow: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; background: white; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px;">
+                            <input type="radio" name="correct_mcq_${index}" value="C" class="q-correct-mcq" data-index="${index}" ${q.correct_answer === 'C' ? 'checked' : ''} title="Mark as correct">
+                            <strong style="color: #003366; min-width: 18px;">C.</strong>
+                            <input type="text" class="q-opt-c" data-index="${index}" value="${q.option_c || ''}" placeholder="Option C" style="flex-grow: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; background: white; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px;">
+                            <input type="radio" name="correct_mcq_${index}" value="D" class="q-correct-mcq" data-index="${index}" ${q.correct_answer === 'D' ? 'checked' : ''} title="Mark as correct">
+                            <strong style="color: #003366; min-width: 18px;">D.</strong>
+                            <input type="text" class="q-opt-d" data-index="${index}" value="${q.option_d || ''}" placeholder="Option D" style="flex-grow: 1; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dynamic True/False Options -->
+                <div class="tf-options-container" style="${isTF ? '' : 'display: none;'}">
+                    <p style="font-weight: bold; margin-bottom: 10px; font-size: 13px; color: #555;">
+                        Select the correct answer:
+                    </p>
+                    <div style="display: flex; gap: 30px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 15px; font-weight: bold; color: #003366;">
+                            <input type="radio" name="correct_tf_${index}" value="True" class="q-correct-tf" data-index="${index}" ${q.correct_answer === 'True' ? 'checked' : ''}>
+                            True
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 15px; font-weight: bold; color: #003366;">
+                            <input type="radio" name="correct_tf_${index}" value="False" class="q-correct-tf" data-index="${index}" ${q.correct_answer === 'False' ? 'checked' : ''}>
+                            False
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Dynamic Identification Options -->
+                <div class="id-options-container" style="${isID ? '' : 'display: none;'}">
+                    <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; color: #003366;">
+                        Correct Answer (Expected Text) <span style="color: red;">*</span>
+                    </label>
+                    <input type="text" class="q-correct-id" data-index="${index}" value="${isID ? (q.correct_answer || '') : ''}" placeholder="Enter the expected answer (e.g., Cryptography)" style="width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                    <small style="color: #666; display: block; margin-top: 4px;">
+                        Graded automatically on submission (case-insensitive, whitespace-trimmed).
+                    </small>
+                </div>
+            `;
+
+            container.appendChild(card);
+        });
+
+        attachEventListeners();
+    }
+
+    function saveCurrentInputs() {
+        document.querySelectorAll('.question-card').forEach((card, index) => {
+            if (!questions[index]) return;
+
+            const textInput = card.querySelector('.q-text-input');
+            const typeSelect = card.querySelector('.q-type-select');
+
+            if (textInput) questions[index].question_text = textInput.value;
+            if (typeSelect) questions[index].question_type = typeSelect.value;
+
+            if (questions[index].question_type === 'MCQ') {
+                const optA = card.querySelector('.q-opt-a');
+                const optB = card.querySelector('.q-opt-b');
+                const optC = card.querySelector('.q-opt-c');
+                const optD = card.querySelector('.q-opt-d');
+                const correctMCQ = card.querySelector('input[name="correct_mcq_' + index + '"]:checked');
+
+                if (optA) questions[index].option_a = optA.value;
+                if (optB) questions[index].option_b = optB.value;
+                if (optC) questions[index].option_c = optC.value;
+                if (optD) questions[index].option_d = optD.value;
+                if (correctMCQ) questions[index].correct_answer = correctMCQ.value;
+            } else if (questions[index].question_type === 'TF') {
+                const correctTF = card.querySelector('input[name="correct_tf_' + index + '"]:checked');
+                if (correctTF) questions[index].correct_answer = correctTF.value;
+                questions[index].option_a = 'True';
+                questions[index].option_b = 'False';
+                questions[index].option_c = '';
+                questions[index].option_d = '';
+            } else if (questions[index].question_type === 'ID') {
+                const correctID = card.querySelector('.q-correct-id');
+                if (correctID) questions[index].correct_answer = correctID.value;
+                questions[index].option_a = '';
+                questions[index].option_b = '';
+                questions[index].option_c = '';
+                questions[index].option_d = '';
+            }
+        });
+    }
+
+    function attachEventListeners() {
+        // Question type change
+        document.querySelectorAll('.q-type-select').forEach(select => {
+            select.addEventListener('change', function() {
+                saveCurrentInputs();
+                const idx = parseInt(this.getAttribute('data-index'), 10);
+                const prevType = questions[idx].question_type;
+                questions[idx].question_type = this.value;
+
+                if (this.value === 'TF') {
+                    if (questions[idx].correct_answer !== 'True' && questions[idx].correct_answer !== 'False') {
+                        questions[idx].correct_answer = 'True';
+                    }
+                } else if (this.value === 'MCQ') {
+                    if (!['A', 'B', 'C', 'D'].includes(questions[idx].correct_answer)) {
+                        questions[idx].correct_answer = 'A';
+                    }
+                } else if (this.value === 'ID') {
+                    if (prevType === 'MCQ' || prevType === 'TF') {
+                        questions[idx].correct_answer = '';
+                    }
+                }
+                renderQuestions();
+            });
+        });
+
+        // Remove question
+        document.querySelectorAll('.btn-remove-question').forEach(btn => {
+            btn.addEventListener('click', function() {
+                if (questions.length <= 1) {
+                    alert('A quiz must have at least one question.');
+                    return;
+                }
+                saveCurrentInputs();
+                const idx = parseInt(this.getAttribute('data-index'), 10);
+                questions.splice(idx, 1);
+                renderQuestions();
+            });
+        });
+    }
+
+    // Add another question
+    document.getElementById('btn-add-question').addEventListener('click', function() {
+        saveCurrentInputs();
+        questions.push({
+            id: null,
+            question_text: '',
+            question_type: 'MCQ',
+            option_a: '',
+            option_b: '',
+            option_c: '',
+            option_d: '',
+            correct_answer: 'A'
+        });
+        renderQuestions();
+    });
+
+    // Form submission validation & serialization
+    document.getElementById('edit-quiz-form').addEventListener('submit', function(e) {
+        saveCurrentInputs();
+
+        if (!questions || questions.length === 0) {
+            e.preventDefault();
+            alert('Please keep at least one question in the quiz.');
+            return;
+        }
+
+        // Client-side completeness check for immediate user feedback
+        for (let i = 0; i < questions.length; i++) {
+            const q = questions[i];
+            const num = i + 1;
+
+            if (!q.question_text || q.question_text.trim() === '') {
+                e.preventDefault();
+                alert(`Question #${num}: Question text cannot be empty.`);
+                return;
+            }
+
+            if (q.question_type === 'MCQ') {
+                if (!q.option_a || q.option_a.trim() === '' ||
+                    !q.option_b || q.option_b.trim() === '' ||
+                    !q.option_c || q.option_c.trim() === '' ||
+                    !q.option_d || q.option_d.trim() === '') {
+                    e.preventDefault();
+                    alert(`Question #${num} (Multiple Choice): All four options (A, B, C, D) are required.`);
+                    return;
+                }
+                if (!['A', 'B', 'C', 'D'].includes(q.correct_answer)) {
+                    e.preventDefault();
+                    alert(`Question #${num} (Multiple Choice): Please designate the correct answer (A, B, C, or D).`);
+                    return;
+                }
+            } else if (q.question_type === 'TF') {
+                if (!['True', 'False'].includes(q.correct_answer)) {
+                    e.preventDefault();
+                    alert(`Question #${num} (True/False): Please select whether True or False is the correct answer.`);
+                    return;
+                }
+            } else if (q.question_type === 'ID') {
+                if (!q.correct_answer || q.correct_answer.trim() === '') {
+                    e.preventDefault();
+                    alert(`Question #${num} (Identification): Expected correct answer cannot be empty.`);
+                    return;
+                }
+            }
+        }
+
+        // Serialize into the hidden input for server-side processing
+        document.getElementById('questions_data_input').value = JSON.stringify(questions);
+    });
+
+    // Initial render
+    renderQuestions();
+</script>
+{% endblock %}
