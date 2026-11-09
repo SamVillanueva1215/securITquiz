@@ -1,41 +1,65 @@
 {% extends 'quiz/base.html' %}
 
-{% block content %}
-<div style="max-width: 850px; margin: 0 auto;">
+{% block title %}Student Profile &bull; securITquiz{% endblock %}
 
-    <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 25px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
-        <div style="border-bottom: 2px solid #FFD700; padding-bottom: 12px; margin-bottom: 20px;">
-            <h2 style="color: #003366; margin: 0 0 5px 0;">Student Profile & Academic Record</h2>
-            <span style="font-size: 13px; color: #666;">securITquiz Verified Academic Identity</span>
+{% block content %}
+<div style="max-width: 920px; margin: 0 auto;">
+
+    <!-- Student Identity Card -->
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 14px; padding: 28px; margin-bottom: 28px; box-shadow: var(--shadow-sm);">
+        <div style="border-bottom: 2px solid #FFD700; padding-bottom: 14px; margin-bottom: 22px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+                <div style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #2563eb; margin-bottom: 4px;">
+                    <span style="display: inline-block; width: 6px; height: 6px; background: #2563eb; border-radius: 50%;"></span>
+                    Verified Academic Identity
+                </div>
+                <h2 style="color: #003366; margin: 0 0 4px 0; font-size: 24px; font-weight: 800;">
+                    Student Profile & Academic Record
+                </h2>
+                <div style="font-size: 13px; color: #64748b;">
+                    securITquiz Verified Academic Identity
+                </div>
+            </div>
+
+            <div>
+                <a href="{% url 'student_dashboard' %}" class="btn btn-secondary" style="font-size: 13px; padding: 8px 16px; border-radius: 6px;">
+                    ← Back to Dashboard
+                </a>
+            </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
-            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
-                <div style="font-size: 11px; font-weight: bold; color: #555; text-transform: uppercase;">Full Name</div>
-                <div style="font-size: 18px; font-weight: bold; color: #003366; margin-top: 4px;">{{ profile.full_name }}</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 22px;">
+            <div style="background: #f8fafc; border: 1px solid var(--slate-200); border-radius: 10px; padding: 18px;">
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Full Name</div>
+                <div style="font-size: 20px; font-weight: 800; color: #003366; margin-top: 4px;">{{ profile.full_name }}</div>
             </div>
 
-            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
-                <div style="font-size: 11px; font-weight: bold; color: #555; text-transform: uppercase;">Student ID</div>
-                <div style="font-size: 18px; font-weight: bold; color: #003366; margin-top: 4px;">{{ profile.student_id }}</div>
+            <div style="background: #f8fafc; border: 1px solid var(--slate-200); border-radius: 10px; padding: 18px;">
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Student ID</div>
+                <div style="font-size: 20px; font-weight: 800; color: #003366; margin-top: 4px; font-family: var(--font-mono);">{{ profile.student_id }}</div>
             </div>
 
-            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
-                <div style="font-size: 11px; font-weight: bold; color: #555; text-transform: uppercase;">Username & Email</div>
-                <div style="font-size: 14px; font-weight: bold; color: #003366; margin-top: 4px;">
+            <div style="background: #f8fafc; border: 1px solid var(--slate-200); border-radius: 10px; padding: 18px;">
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Username & Email</div>
+                <div style="font-size: 14px; font-weight: 700; color: #003366; margin-top: 4px;">
                     @{{ profile.user.username }}<br>
-                    <span style="font-size: 12px; color: #666; font-weight: normal;">{{ profile.user.email }}</span>
+                    <span style="font-size: 12.5px; color: #64748b; font-weight: 500;">{{ profile.user.email }}</span>
                 </div>
             </div>
         </div>
 
         <!-- Account Security Status (Part 9) -->
-        <div style="background: #eef5fc; border: 1px solid #c9ddf0; border-radius: 6px; padding: 16px; margin-top: 15px;">
-            <h4 style="margin: 0 0 8px 0; color: #003366; font-size: 14px;">🛡️ Account Security & Session Status</h4>
-            <div style="font-size: 13px; color: #444; line-height: 1.6;">
-                <div><strong>Single Active Session:</strong> <span class="badge badge-success">ACTIVE & ENFORCED</span></div>
+        <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 18px 20px;">
+            <h4 style="margin: 0 0 10px 0; color: #003366; font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+                <span>🛡️</span> Account Security & Session Status
+            </h4>
+            <div style="font-size: 13.5px; color: #334155; display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <strong>Single Active Session:</strong>
+                    <span class="badge badge-success">ACTIVE & ENFORCED</span>
+                </div>
                 {% if active_session %}
-                    <div><strong>Current Device IP:</strong> <code>{{ active_session.ip_address|default:"127.0.0.1" }}</code></div>
+                    <div><strong>Current Device IP:</strong> <code style="background: #ffffff; border: 1px solid #bfdbfe; color: #003366; font-weight: 700;">{{ active_session.ip_address|default:"127.0.0.1" }}</code></div>
                     <div><strong>Last Authenticated Activity:</strong> {{ active_session.last_activity|date:"M d, Y H:i:s" }} UTC</div>
                 {% endif %}
                 <div><strong>Inactivity Auto-Logout Window:</strong> 30 minutes</div>
@@ -44,73 +68,79 @@
     </div>
 
     <!-- Completed Quizzes Table -->
-    <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 22px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
-        <h3 style="color: #003366; margin: 0 0 15px 0; font-size: 17px; border-bottom: 1px solid #f0f4f8; padding-bottom: 8px;">
-            Completed Quizzes & Examination History
-        </h3>
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 14px; padding: 24px; box-shadow: var(--shadow-sm);">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--slate-100); padding-bottom: 12px; margin-bottom: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 20px;">📜</span>
+                <h3 style="color: #003366; margin: 0; font-size: 17px; font-weight: 700;">
+                    Completed Quizzes & Examination History
+                </h3>
+            </div>
+            <span style="font-size: 12px; font-weight: 600; color: #64748b; background: #f1f5f9; padding: 3px 10px; border-radius: 9999px;">
+                {{ submissions|length }} Total
+            </span>
+        </div>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>Quiz Title</th>
-                    <th>Date Taken</th>
-                    <th>Score</th>
-                    <th>Pass / Fail</th>
-                    <th>Results Status</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for sub in submissions %}
-                <tr>
-                    <td><strong>{{ sub.quiz.title }}</strong></td>
-                    <td style="font-size: 13px; color: #555;">{{ sub.submitted_at|date:"M d, Y h:i A" }}</td>
-                    <td>
-                        {% if sub.quiz.results_released %}
-                            <strong>{{ sub.score|floatformat:0 }}</strong> ({{ sub.percentage }}%)
-                        {% else %}
-                            <span style="color: #777; font-size: 12px;">Withheld</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if sub.quiz.results_released %}
-                            {% if sub.is_passed %}
-                                <span class="badge badge-success">PASSED</span>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Quiz Title</th>
+                        <th>Date Taken</th>
+                        <th>Score</th>
+                        <th>Pass / Fail</th>
+                        <th>Results Status</th>
+                        <th style="text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sub in submissions %}
+                    <tr>
+                        <td><strong style="color: #0f172a;">{{ sub.quiz.title }}</strong></td>
+                        <td style="font-size: 12.5px; color: #475569;">{{ sub.submitted_at|date:"M d, Y h:i A" }}</td>
+                        <td>
+                            {% if sub.quiz.results_released %}
+                                <strong style="color: #003366;">{{ sub.score|floatformat:0 }}</strong>
+                                <span style="color: #64748b; font-size: 12px;">({{ sub.percentage }}%)</span>
                             {% else %}
-                                <span class="badge badge-danger">FAILED</span>
+                                <span style="color: #64748b; font-size: 12px; font-style: italic;">Withheld</span>
                             {% endif %}
-                        {% else %}
-                            <span class="badge badge-warning">PENDING</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if sub.quiz.results_released %}
-                            <span class="badge badge-info">RELEASED</span>
-                        {% else %}
-                            <span class="badge badge-warning">HELD</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <a href="{% url 'quiz_result' sub.id %}" class="btn" style="padding: 4px 8px; font-size: 11px;">
-                            View Details
-                        </a>
-                    </td>
-                </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="6" style="text-align: center; color: #888; padding: 20px;">
-                        No completed quiz submissions found.
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <div style="margin-top: 25px; text-align: center;">
-        <a href="{% url 'student_dashboard' %}" class="btn">
-            ← Back to Student Dashboard
-        </a>
+                        </td>
+                        <td>
+                            {% if sub.quiz.results_released %}
+                                {% if sub.is_passed %}
+                                    <span class="badge badge-success">PASSED</span>
+                                {% else %}
+                                    <span class="badge badge-danger">FAILED</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="badge badge-warning">PENDING</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if sub.quiz.results_released %}
+                                <span class="badge badge-info">RELEASED</span>
+                            {% else %}
+                                <span class="badge badge-warning">HELD</span>
+                            {% endif %}
+                        </td>
+                        <td style="text-align: right;">
+                            <a href="{% url 'quiz_result' sub.id %}" class="btn btn-secondary btn-sm" style="padding: 5px 12px; font-size: 12px; border-radius: 6px;">
+                                View Details
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: #888; padding: 36px 20px;">
+                            <div style="font-size: 32px; margin-bottom: 8px;">📑</div>
+                            <div style="font-weight: 600; color: #475569;">No examination history on record.</div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 
 </div>

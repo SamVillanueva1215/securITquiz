@@ -1,47 +1,61 @@
 {% extends 'quiz/base.html' %}
 
+{% block title %}403 Access Denied &bull; securITquiz{% endblock %}
+
 {% block content %}
-<div style="max-width: 600px; margin: 40px auto; text-align: center;">
+<div style="max-width: 580px; margin: 40px auto; text-align: center;">
 
-    <div style="font-size: 64px; color: #8b0000; margin-bottom: 10px;">
-        &#9888;
-    </div>
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 16px; padding: 40px 32px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);">
 
-    <h2 style="color: #8b0000; margin-bottom: 10px;">
-        403 - Access Denied
-    </h2>
+        <div style="width: 72px; height: 72px; margin: 0 auto 18px; background: #fef2f2; border: 2px solid #fecaca; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; box-shadow: 0 0 0 10px rgba(239, 68, 68, 0.1);">
+            ⚠️
+        </div>
 
-    <p style="color: #555; font-size: 16px; line-height: 1.6;">
-        You do not have permission to access this page. This resource is strictly restricted by Role-Based Access Control (RBAC).
-    </p>
+        <h2 style="color: #991b1b; margin: 0 0 10px 0; font-size: 24px; font-weight: 800;">
+            403 - Access Denied
+        </h2>
 
-    <div style="background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; padding: 15px; margin: 25px 0; text-align: left;">
-        <p style="margin: 5px 0;"><strong>Required Role:</strong> 
-            {% for role in required_roles %}
-                <span style="background-color: #003366; color: white; padding: 2px 8px; border-radius: 3px; font-size: 13px;">{{ role }}</span>
-            {% endfor %}
+        <p style="color: #475569; font-size: 14.5px; line-height: 1.6; margin: 0 0 24px 0;">
+            You do not have permission to access this page. This resource is strictly restricted by Role-Based Access Control (RBAC).
         </p>
-        <p style="margin: 5px 0;"><strong>Your Assigned Role(s):</strong> 
-            {% for role in user_roles %}
-                <span style="background-color: #6c757d; color: white; padding: 2px 8px; border-radius: 3px; font-size: 13px;">{{ role }}</span>
-            {% endfor %}
-        </p>
-    </div>
 
-    <div style="margin-top: 30px;">
-        {% if "Student" in user_roles %}
-            <a href="{% url 'student_dashboard' %}" class="btn">
-                &larr; Return to Student Dashboard
-            </a>
-        {% elif "Instructor" in user_roles %}
-            <a href="{% url 'instructor_dashboard' %}" class="btn">
-                &larr; Return to Instructor Dashboard
-            </a>
-        {% else %}
-            <a href="{% url 'home' %}" class="btn">
-                &larr; Return to Home
-            </a>
-        {% endif %}
+        <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 18px 20px; margin: 24px 0; text-align: left; font-size: 13.5px;">
+            <div style="margin: 0 0 10px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <strong style="color: #92400e;">Required Role:</strong> 
+                <div style="display: flex; gap: 6px;">
+                    {% for role in required_roles %}
+                        <span class="badge" style="background-color: #003366; color: white;">{{ role }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div style="margin: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <strong style="color: #92400e;">Your Assigned Role(s):</strong> 
+                <div style="display: flex; gap: 6px;">
+                    {% for role in user_roles %}
+                        <span class="badge badge-neutral">{{ role }}</span>
+                    {% empty %}
+                        <span style="color: #64748b; font-size: 12px;">(No role assigned)</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 28px;">
+            {% if "Student" in user_roles %}
+                <a href="{% url 'student_dashboard' %}" class="btn" style="background-color: #003366; padding: 11px 24px; border-radius: 8px;">
+                    &larr; Return to Student Dashboard
+                </a>
+            {% elif "Instructor" in user_roles %}
+                <a href="{% url 'instructor_dashboard' %}" class="btn" style="background-color: #003366; padding: 11px 24px; border-radius: 8px;">
+                    &larr; Return to Instructor Dashboard
+                </a>
+            {% else %}
+                <a href="{% url 'home' %}" class="btn" style="background-color: #003366; padding: 11px 24px; border-radius: 8px;">
+                    &larr; Return to Home
+                </a>
+            {% endif %}
+        </div>
+
     </div>
 
 </div>

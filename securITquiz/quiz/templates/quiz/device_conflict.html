@@ -1,48 +1,58 @@
 {% extends 'quiz/base.html' %}
 
+{% block title %}Active Session Detected &bull; securITquiz{% endblock %}
+
 {% block content %}
-<div style="max-width: 600px; margin: 0 auto; text-align: center; padding: 20px 0;">
+<div style="max-width: 580px; margin: 30px auto; text-align: center;">
 
-    <div style="font-size: 50px; color: #c0392b; margin-bottom: 15px;">⚠️</div>
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 16px; padding: 40px 32px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);">
 
-    <h2 style="color: #003366; margin-bottom: 10px;">Active Session Detected</h2>
+        <div style="width: 72px; height: 72px; margin: 0 auto 18px; background: #fef2f2; border: 2px solid #fecaca; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; box-shadow: 0 0 0 10px rgba(239, 68, 68, 0.1);">
+            ⚠️
+        </div>
 
-    <p style="font-size: 16px; color: #555; line-height: 1.6; margin-bottom: 25px;">
-        This account (<strong>{{ account_username }}</strong>) is currently logged in on another device or browser.
-    </p>
+        <h2 style="color: #003366; margin: 0 0 10px 0; font-size: 24px; font-weight: 800;">
+            Active Session Detected
+        </h2>
 
-    <div style="background-color: #fff9e6; border-left: 4px solid #f1c40f; padding: 15px; text-align: left; margin-bottom: 30px; border-radius: 4px;">
-        <h4 style="margin: 0 0 8px 0; color: #b7950b;">Single Active Session Policy</h4>
-        <p style="margin: 0; font-size: 14px; color: #666;">
-            To ensure academic integrity and account security, securITquiz allows only <strong>one active session per account</strong> at any time.
+        <p style="font-size: 14.5px; color: #475569; line-height: 1.5; margin: 0 0 24px 0;">
+            This account (<strong>{{ account_username }}</strong>) is currently logged in on another device or browser.
         </p>
-        <ul style="margin: 10px 0 0 20px; padding: 0; font-size: 13px; color: #666;">
-            <li>Existing session IP: <code>{{ existing_ip }}</code></li>
-            <li>Last recorded activity: {{ last_active|date:"M d, Y H:i:s" }} UTC</li>
-        </ul>
-    </div>
 
-    <p style="font-weight: bold; color: #003366; font-size: 16px; margin-bottom: 25px;">
-        Would you like to continue here and end the existing session?
-    </p>
+        <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; padding: 18px 20px; text-align: left; margin-bottom: 26px; border-radius: 10px;">
+            <h4 style="margin: 0 0 6px 0; color: #92400e; font-size: 14px; font-weight: 700;">Single Active Session Policy</h4>
+            <p style="margin: 0; font-size: 13.5px; color: #78350f; line-height: 1.4;">
+                To ensure academic integrity and account security, securITquiz allows only <strong>one active session per account</strong> at any time.
+            </p>
+            <ul style="margin: 10px 0 0 18px; padding: 0; font-size: 12.5px; color: #78350f; line-height: 1.6;">
+                <li>Existing session IP: <code style="background: #ffffff; border: 1px solid #fde68a; color: #003366; font-weight: 700;">{{ existing_ip }}</code></li>
+                <li>Last recorded activity: <strong>{{ last_active|date:"M d, Y H:i:s" }} UTC</strong></li>
+            </ul>
+        </div>
 
-    <div style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+        <p style="font-weight: 700; color: #003366; font-size: 15px; margin-bottom: 24px;">
+            Would you like to continue here and end the existing session?
+        </p>
 
-        <!-- Confirm Device Switch -->
-        <form method="POST" action="{% url 'confirm_device_switch' %}">
-            {% csrf_token %}
-            <button type="submit" class="btn" style="background-color: #003366; color: #FFD700; padding: 12px 24px; font-size: 15px;">
-                ✓ Continue Here (End Other Session)
-            </button>
-        </form>
+        <div style="display: flex; justify-content: center; gap: 14px; flex-wrap: wrap;">
 
-        <!-- Cancel Device Switch -->
-        <form method="POST" action="{% url 'cancel_device_switch' %}">
-            {% csrf_token %}
-            <button type="submit" class="btn btn-secondary" style="padding: 12px 24px; font-size: 15px;">
-                ✕ Cancel (Keep Existing Session)
-            </button>
-        </form>
+            <!-- Confirm Device Switch -->
+            <form method="POST" action="{% url 'confirm_device_switch' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn" style="background-color: #003366; color: #FFD700; padding: 12px 24px; font-size: 14.5px; border-radius: 8px; font-weight: 700;">
+                    ✓ Continue Here (End Other Session)
+                </button>
+            </form>
+
+            <!-- Cancel Device Switch -->
+            <form method="POST" action="{% url 'cancel_device_switch' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-secondary" style="padding: 12px 24px; font-size: 14.5px; border-radius: 8px;">
+                    ✕ Cancel (Keep Existing Session)
+                </button>
+            </form>
+
+        </div>
 
     </div>
 

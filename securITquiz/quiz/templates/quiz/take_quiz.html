@@ -1,41 +1,51 @@
 {% extends 'quiz/base.html' %}
 
-{% block content %}
-<div style="max-width: 850px; margin: 0 auto;">
+{% block title %}Taking Exam: {{ quiz.title }} &bull; securITquiz{% endblock %}
 
-    <!-- Quiz Header & Info Banner -->
-    <div style="background: #ffffff; border: 1px solid #e0e6ed; border-radius: 8px; padding: 25px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 15px; border-bottom: 2px solid #FFD700; padding-bottom: 15px; margin-bottom: 15px;">
-            <div>
-                <h2 style="color: #003366; margin: 0 0 8px 0; font-size: 24px;">{{ quiz.title }}</h2>
+{% block content %}
+<div style="max-width: 880px; margin: 0 auto;">
+
+    <!-- Sticky Exam HUD & Info Banner -->
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 14px; padding: 24px; margin-bottom: 28px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); position: sticky; top: 72px; z-index: 100;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; border-bottom: 2px solid #FFD700; padding-bottom: 16px; margin-bottom: 16px;">
+            <div style="flex: 1; min-width: 250px;">
+                <div style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #2563eb; margin-bottom: 4px;">
+                    <span style="display: inline-block; width: 6px; height: 6px; background: #2563eb; border-radius: 50%;"></span>
+                    Active Examination
+                </div>
+                <h2 style="color: #003366; margin: 0 0 4px 0; font-size: 22px; font-weight: 800;">
+                    {{ quiz.title }}
+                </h2>
                 {% if quiz.description %}
-                    <p style="color: #555; margin: 0; font-size: 14px; line-height: 1.5;">{{ quiz.description }}</p>
+                    <p style="color: #64748b; margin: 0; font-size: 13.5px; line-height: 1.4;">
+                        {{ quiz.description }}
+                    </p>
                 {% endif %}
             </div>
 
-            <!-- Examination Timer Widget -->
-            <div id="timer-box" style="background: #003366; color: white; padding: 10px 18px; border-radius: 6px; text-align: center; min-width: 140px; box-shadow: 0 2px 6px rgba(0,51,102,0.2);">
-                <div style="font-size: 11px; text-transform: uppercase; color: #FFD700; font-weight: bold; letter-spacing: 1px;">
+            <!-- High-Contrast Examination Timer Widget -->
+            <div id="timer-box" style="background: #003366; color: white; padding: 12px 20px; border-radius: 10px; text-align: center; min-width: 150px; box-shadow: 0 4px 12px rgba(0, 51, 102, 0.25); transition: background-color 0.3s ease;">
+                <div style="font-size: 10.5px; text-transform: uppercase; color: #FFD700; font-weight: 800; letter-spacing: 1px;">
                     Time Remaining
                 </div>
-                <div id="timer-display" style="font-size: 22px; font-weight: bold; font-family: monospace; margin-top: 2px;">
+                <div id="timer-display" style="font-size: 26px; font-weight: 800; font-family: var(--font-mono); margin-top: 2px; letter-spacing: 1px;">
                     --:--
                 </div>
             </div>
         </div>
 
-        <!-- Progress Bar & Exam Details -->
-        <div style="margin-bottom: 15px;">
-            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: bold; color: #003366; margin-bottom: 6px;">
+        <!-- Progress Tracker & Metadata -->
+        <div style="margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; color: #003366; margin-bottom: 6px;">
                 <span>Total Questions: {{ total_questions }}</span>
                 <span>Active Examination</span>
             </div>
-            <div style="width: 100%; height: 8px; background-color: #e0e6ed; border-radius: 4px; overflow: hidden;">
-                <div style="width: 100%; height: 100%; background-color: #FFD700;"></div>
+            <div style="width: 100%; height: 8px; background-color: #e2e8f0; border-radius: 9999px; overflow: hidden;">
+                <div style="width: 100%; height: 100%; background: linear-gradient(90deg, #2563eb, #FFD700); border-radius: 9999px;"></div>
             </div>
         </div>
 
-        <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: #666;">
+        <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: #64748b; padding-top: 4px;">
             <div><strong style="color: #003366;">Sequential Navigation:</strong> Once moving forward, previously answered questions lock.</div>
             <div><strong style="color: #003366;">Deadline:</strong> {{ quiz.deadline|date:"M d, Y h:i A" }}</div>
         </div>
@@ -47,64 +57,69 @@
 
         {% for q_item in questions_with_status %}
         {% with question=q_item.question is_locked=q_item.is_locked saved_answer=q_item.saved_answer %}
-        <div class="question-container" style="background: #ffffff; border: 1px solid {% if is_locked %}#e2e8f0{% else %}#003366{% endif %}; border-radius: 8px; padding: 22px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #f0f4f8; padding-bottom: 8px;">
-                <span style="font-weight: bold; color: #003366; font-size: 15px;">
+        <div class="question-container" style="background: #ffffff; border: 1.5px solid {% if is_locked %}#e2e8f0{% else %}#cbd5e1{% endif %}; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: var(--shadow-sm); transition: border-color 0.2s;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid var(--slate-100); padding-bottom: 10px;">
+                <span style="font-weight: 800; color: #003366; font-size: 15px; display: inline-flex; align-items: center; gap: 6px;">
+                    <span style="background: #eff6ff; color: #1e3a8a; border: 1px solid #bfdbfe; border-radius: 6px; padding: 2px 8px; font-size: 12px;">#{{ forloop.counter }}</span>
                     Question {{ forloop.counter }} of {{ total_questions }}
                 </span>
-                <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
                     {% if is_locked %}
-                        <span class="badge badge-warning" style="margin-right: 6px;">🔒 Locked</span>
+                        <span class="badge badge-warning">🔒 Locked</span>
                     {% endif %}
-                    <span style="background-color: #f0f4f8; color: #003366; font-size: 11px; font-weight: bold; padding: 3px 8px; border-radius: 4px; border: 1px solid #d9e2ec;">
+                    <span class="badge badge-info" style="font-size: 11px;">
                         {% if question.question_type == 'MCQ' %}Multiple Choice{% elif question.question_type == 'TF' %}True / False{% else %}Identification{% endif %}
                     </span>
                 </div>
             </div>
 
-            <p style="font-size: 16px; color: #222; line-height: 1.5; margin: 0 0 16px 0; font-weight: 500;">
+            <p style="font-size: 16.5px; color: #0f172a; line-height: 1.6; margin: 0 0 20px 0; font-weight: 600;">
                 {{ question.question_text }}
             </p>
 
             {% if question.question_type == 'MCQ' %}
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <label style="display: flex; align-items: center; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
-                        <input type="radio" name="question_{{ question.id }}" value="A" {% if saved_answer == 'A' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 12px; transform: scale(1.2);">
-                        <strong style="color: #003366; margin-right: 8px;">A.</strong> {{ question.option_a }}
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <label style="display: flex; align-items: center; padding: 12px 18px; border: 1.5px solid #e2e8f0; border-radius: 8px; cursor: pointer; transition: all 0.15s ease; background: #ffffff;">
+                        <input type="radio" name="question_{{ question.id }}" value="A" {% if saved_answer == 'A' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 14px; width: 18px; height: 18px; accent-color: #2563eb;">
+                        <span style="font-weight: 800; color: #003366; margin-right: 10px; font-size: 14px;">A.</span>
+                        <span style="color: #1e293b; font-size: 14.5px;">{{ question.option_a }}</span>
                     </label>
 
-                    <label style="display: flex; align-items: center; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
-                        <input type="radio" name="question_{{ question.id }}" value="B" {% if saved_answer == 'B' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 12px; transform: scale(1.2);">
-                        <strong style="color: #003366; margin-right: 8px;">B.</strong> {{ question.option_b }}
+                    <label style="display: flex; align-items: center; padding: 12px 18px; border: 1.5px solid #e2e8f0; border-radius: 8px; cursor: pointer; transition: all 0.15s ease; background: #ffffff;">
+                        <input type="radio" name="question_{{ question.id }}" value="B" {% if saved_answer == 'B' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 14px; width: 18px; height: 18px; accent-color: #2563eb;">
+                        <span style="font-weight: 800; color: #003366; margin-right: 10px; font-size: 14px;">B.</span>
+                        <span style="color: #1e293b; font-size: 14.5px;">{{ question.option_b }}</span>
                     </label>
 
-                    <label style="display: flex; align-items: center; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
-                        <input type="radio" name="question_{{ question.id }}" value="C" {% if saved_answer == 'C' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 12px; transform: scale(1.2);">
-                        <strong style="color: #003366; margin-right: 8px;">C.</strong> {{ question.option_c }}
+                    <label style="display: flex; align-items: center; padding: 12px 18px; border: 1.5px solid #e2e8f0; border-radius: 8px; cursor: pointer; transition: all 0.15s ease; background: #ffffff;">
+                        <input type="radio" name="question_{{ question.id }}" value="C" {% if saved_answer == 'C' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 14px; width: 18px; height: 18px; accent-color: #2563eb;">
+                        <span style="font-weight: 800; color: #003366; margin-right: 10px; font-size: 14px;">C.</span>
+                        <span style="color: #1e293b; font-size: 14.5px;">{{ question.option_c }}</span>
                     </label>
 
-                    <label style="display: flex; align-items: center; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
-                        <input type="radio" name="question_{{ question.id }}" value="D" {% if saved_answer == 'D' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 12px; transform: scale(1.2);">
-                        <strong style="color: #003366; margin-right: 8px;">D.</strong> {{ question.option_d }}
+                    <label style="display: flex; align-items: center; padding: 12px 18px; border: 1.5px solid #e2e8f0; border-radius: 8px; cursor: pointer; transition: all 0.15s ease; background: #ffffff;">
+                        <input type="radio" name="question_{{ question.id }}" value="D" {% if saved_answer == 'D' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 14px; width: 18px; height: 18px; accent-color: #2563eb;">
+                        <span style="font-weight: 800; color: #003366; margin-right: 10px; font-size: 14px;">D.</span>
+                        <span style="color: #1e293b; font-size: 14.5px;">{{ question.option_d }}</span>
                     </label>
                 </div>
 
             {% elif question.question_type == 'TF' %}
-                <div style="display: flex; gap: 20px;">
-                    <label style="flex: 1; display: flex; align-items: center; padding: 12px 16px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
-                        <input type="radio" name="question_{{ question.id }}" value="True" {% if saved_answer == 'True' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 12px; transform: scale(1.2);">
-                        <strong style="color: #003366;">True</strong>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                    <label style="display: flex; align-items: center; padding: 14px 20px; border: 1.5px solid #e2e8f0; border-radius: 8px; cursor: pointer; transition: all 0.15s ease; background: #ffffff;">
+                        <input type="radio" name="question_{{ question.id }}" value="True" {% if saved_answer == 'True' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 14px; width: 18px; height: 18px; accent-color: #2563eb;">
+                        <strong style="color: #003366; font-size: 15px;">True</strong>
                     </label>
 
-                    <label style="flex: 1; display: flex; align-items: center; padding: 12px 16px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
-                        <input type="radio" name="question_{{ question.id }}" value="False" {% if saved_answer == 'False' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 12px; transform: scale(1.2);">
-                        <strong style="color: #003366;">False</strong>
+                    <label style="display: flex; align-items: center; padding: 14px 20px; border: 1.5px solid #e2e8f0; border-radius: 8px; cursor: pointer; transition: all 0.15s ease; background: #ffffff;">
+                        <input type="radio" name="question_{{ question.id }}" value="False" {% if saved_answer == 'False' %}checked{% endif %} {% if is_locked %}disabled{% endif %} style="margin-right: 14px; width: 18px; height: 18px; accent-color: #2563eb;">
+                        <strong style="color: #003366; font-size: 15px;">False</strong>
                     </label>
                 </div>
 
             {% elif question.question_type == 'ID' %}
                 <div>
-                    <label for="id_question_{{ question.id }}" style="display: block; font-size: 13px; font-weight: bold; color: #555; margin-bottom: 6px;">
+                    <label for="id_question_{{ question.id }}" style="display: block; font-size: 13.5px; font-weight: 700; color: #334155; margin-bottom: 8px;">
                         Identification Answer:
                     </label>
                     <input type="text"
@@ -114,18 +129,21 @@
                            {% if is_locked %}disabled{% endif %}
                            placeholder="Enter answer (case-insensitive)..."
                            autocomplete="off"
-                           style="width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 15px; box-sizing: border-box;">
+                           style="width: 100%; padding: 12px 16px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 15px; font-family: var(--font-mono); box-sizing: border-box;">
                 </div>
             {% endif %}
         </div>
         {% endwith %}
         {% endfor %}
 
-        <!-- Submit Button -->
-        <div style="text-align: center; margin: 30px 0;">
-            <button type="submit" name="action" value="submit_all" class="btn" style="background-color: #003366; color: #FFD700; padding: 14px 36px; font-size: 16px; border-radius: 6px;">
-                Submit Quiz Answers
+        <!-- Submit Button Section -->
+        <div style="text-align: center; margin: 36px 0 20px;">
+            <button type="submit" name="action" value="submit_all" class="btn" style="background-color: #003366; color: #FFD700; padding: 15px 42px; font-size: 16px; font-weight: 800; border-radius: 10px; box-shadow: 0 4px 14px rgba(0, 51, 102, 0.3);">
+                <span>🔒 Submit Quiz Answers</span>
             </button>
+            <div style="font-size: 12.5px; color: #94a3b8; margin-top: 10px;">
+                Submissions are immediately hashed and signed via DSA private key.
+            </div>
         </div>
     </form>
 
@@ -164,7 +182,7 @@
         timerDisplay.textContent = displayMin + ":" + displaySec;
 
         if (remainingSeconds <= 120) {
-            timerBox.style.background = "#c0392b";
+            timerBox.style.background = "#ef4444";
             timerDisplay.style.color = "#FFD700";
         }
 

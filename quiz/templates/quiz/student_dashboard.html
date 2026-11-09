@@ -1,50 +1,188 @@
 {% extends 'quiz/base.html' %}
-{% block content %}
-    <h2 style="color: #003366;">Student Dashboard</h2>
-    
-    <h3>Available Quizzes</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Title</th>
-                <th>Time Limit</th>
-                <th>Deadline</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for quiz in available_quizzes %}
-            <tr>
-                <td>{{ quiz.title }}</td>
-                <td>{{ quiz.time_limit_minutes }} mins</td>
-                <td>{{ quiz.deadline }}</td>
-                <td><button class="btn">Start Quiz</button></td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="4">No quizzes available at this time.</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
 
-    <h3 style="margin-top: 40px;">Completed Quizzes</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Quiz</th>
-                <th>Score</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for sub in completed_quizzes %}
-            <tr>
-                <td>{{ sub.quiz.title }}</td>
-                <td>{{ sub.score }} ({{ sub.percentage }}%)</td>
-                <td><span style="color: green; font-weight: bold;">DSA Verified</span></td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="3">No submissions yet.</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
+{% block title %}Student Dashboard &bull; securITquiz{% endblock %}
+
+{% block content %}
+<div style="max-width: 1040px; margin: 0 auto;">
+
+    <!-- Dashboard Header Banner -->
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; background: linear-gradient(135deg, #f8fafc 0%, #edf2f7 100%); padding: 24px 28px; border-radius: 14px; border: 1px solid var(--slate-200);">
+        <div>
+            <div style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #2563eb; margin-bottom: 6px;">
+                <span style="display: inline-block; width: 6px; height: 6px; background: #2563eb; border-radius: 50%;"></span>
+                Student Portal
+            </div>
+            <h2 style="color: #003366; margin: 0 0 6px 0; font-size: 24px; font-weight: 800;">
+                Student Examination Dashboard
+            </h2>
+            <p style="margin: 0; color: #64748b; font-size: 13.5px;">
+                Access active assessments, verify entry PINs, and review cryptographically signed results.
+            </p>
+        </div>
+
+        <div>
+            <a href="{% url 'student_profile' %}" class="btn btn-secondary" style="border-radius: 8px; font-size: 13.5px; padding: 10px 18px;">
+                👤 View My Profile
+            </a>
+        </div>
+    </div>
+
+    <!-- Available Quizzes Section -->
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 14px; padding: 24px; margin-bottom: 32px; box-shadow: var(--shadow-sm);">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #FFD700; padding-bottom: 12px; margin-bottom: 18px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">📋</span>
+                <h3 style="color: #003366; margin: 0; font-size: 18px; font-weight: 700;">
+                    Available Quizzes
+                </h3>
+            </div>
+            <span style="font-size: 12px; font-weight: 600; color: #64748b; background: #f1f5f9; padding: 3px 10px; border-radius: 9999px;">
+                {{ available_quizzes|length }} Active
+            </span>
+        </div>
+
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="min-width: 220px;">Quiz Title</th>
+                        <th>Time Limit</th>
+                        <th>Passing Req.</th>
+                        <th>Deadline</th>
+                        <th style="text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for quiz in available_quizzes %}
+                    <tr>
+                        <td>
+                            <strong style="color: #0f172a; font-size: 14.5px;">{{ quiz.title }}</strong>
+                            {% if quiz.description %}
+                                <div style="font-size: 12px; color: #64748b; margin-top: 3px; line-height: 1.4;">
+                                    {{ quiz.description|truncatechars:60 }}
+                                </div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge badge-info" style="font-family: var(--font-mono); font-size: 12px;">
+                                ⏱️ {{ quiz.time_limit_minutes }} mins
+                            </span>
+                        </td>
+                        <td>
+                            <span style="font-weight: 700; color: #1e3a8a;">
+                                {{ quiz.passing_percentage|floatformat:0 }}%
+                            </span>
+                        </td>
+                        <td style="font-size: 12.5px; color: #475569;">
+                            {{ quiz.deadline|date:"M d, Y h:i A" }}
+                        </td>
+                        <td style="text-align: right;">
+                            {% if quiz.id in completed_quiz_ids %}
+                                <span class="badge badge-success">✓ Completed</span>
+                            {% elif quiz.deadline and now > quiz.deadline %}
+                                <span class="badge badge-danger">Closed</span>
+                            {% else %}
+                                <a href="{% url 'verify_quiz_pin' quiz.id %}" class="btn" style="padding: 7px 16px; font-size: 13px; background-color: #003366; border-radius: 6px;">
+                                    Start Quiz &rarr;
+                                </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: #888; padding: 36px 20px;">
+                            <div style="font-size: 32px; margin-bottom: 8px;">📭</div>
+                            <div style="font-weight: 600; color: #475569; margin-bottom: 4px;">No quizzes available at this time.</div>
+                            <div style="font-size: 12.5px; color: #94a3b8;">When instructors activate exams with your group, they will appear here.</div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Completed Submissions Section -->
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 14px; padding: 24px; box-shadow: var(--shadow-sm);">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #003366; padding-bottom: 12px; margin-bottom: 18px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">🎓</span>
+                <h3 style="color: #003366; margin: 0; font-size: 18px; font-weight: 700;">
+                    Completed Submissions
+                </h3>
+            </div>
+            <span style="font-size: 12px; font-weight: 600; color: #64748b; background: #f1f5f9; padding: 3px 10px; border-radius: 9999px;">
+                {{ completed_quizzes|length }} Records
+            </span>
+        </div>
+
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="min-width: 200px;">Quiz</th>
+                        <th>Score</th>
+                        <th>Pass / Fail</th>
+                        <th>Release Status</th>
+                        <th style="text-align: right;">Submission Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sub in completed_quizzes %}
+                    <tr>
+                        <td>
+                            <strong style="color: #0f172a; font-size: 14px;">{{ sub.quiz.title }}</strong>
+                            <div style="font-size: 11.5px; color: #64748b; margin-top: 2px;">
+                                Submitted: {{ sub.submitted_at|date:"M d, Y h:i A" }}
+                            </div>
+                        </td>
+                        <td>
+                            {% if sub.quiz.results_released %}
+                                <div style="font-size: 15px; font-weight: 800; color: #003366;">
+                                    {{ sub.score|floatformat:0 }}
+                                    <span style="font-size: 12px; font-weight: 600; color: #64748b;">({{ sub.percentage }}%)</span>
+                                </div>
+                            {% else %}
+                                <span style="color: #64748b; font-size: 12.5px; font-style: italic;">Withheld</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if sub.quiz.results_released %}
+                                {% if sub.is_passed %}
+                                    <span class="badge badge-success">PASSED</span>
+                                {% else %}
+                                    <span class="badge badge-danger">FAILED</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="badge badge-warning">PENDING</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if sub.quiz.results_released %}
+                                <span class="badge badge-info">RELEASED</span>
+                            {% else %}
+                                <span class="badge badge-warning">HELD</span>
+                            {% endif %}
+                        </td>
+                        <td style="text-align: right;">
+                            <a href="{% url 'quiz_result' sub.id %}" class="btn btn-secondary" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px;">
+                                View Result
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: #888; padding: 36px 20px;">
+                            <div style="font-size: 32px; margin-bottom: 8px;">📑</div>
+                            <div style="font-weight: 600; color: #475569; margin-bottom: 4px;">No submissions yet.</div>
+                            <div style="font-size: 12.5px; color: #94a3b8;">When you complete an assessment, your cryptographically signed submission will appear here.</div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
 {% endblock %}

@@ -1,33 +1,686 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>securITquiz</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}securITquiz &bull; Secure Academic Examination Portal{% endblock %}</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="{% static 'quiz/style.css' %}">
+
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; background-color: #f4f7f6; color: #333; }
-        .navbar { background-color: #003366; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; color: white; }
-        .navbar a { color: white; text-decoration: none; margin-left: 20px; font-weight: bold; }
-        .navbar a:hover { color: #FFD700; }
-        .logo { font-size: 24px; font-weight: bold; color: #FFD700; }
-        .container { max-width: 900px; margin: 40px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-        .btn { background-color: #003366; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; text-decoration: none; font-weight: bold; display: inline-block; }
-        .btn:hover { background-color: #FFD700; color: #003366; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
-        th { background-color: #003366; color: white; }
+        /* Modern Design System & Fallback Styling */
+        :root {
+            --font-main: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+            --navy-900: #0a1128;
+            --navy-850: #0f172a;
+            --navy-800: #1e293b;
+            --primary: #1e3a8a;
+            --primary-light: #2563eb;
+            --accent: #f59e0b;
+            --slate-50: #f8fafc;
+            --slate-100: #f1f5f9;
+            --slate-200: #e2e8f0;
+            --slate-300: #cbd5e1;
+            --slate-600: #475569;
+            --slate-700: #334155;
+            --slate-900: #0f172a;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --info: #0284c7;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --radius-full: 9999px;
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: var(--font-main);
+            background-color: #f8fafc;
+            color: var(--slate-900);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .navbar {
+            background: linear-gradient(135deg, #0a1128 0%, #0f172a 100%);
+            border-bottom: 1px solid #1e293b;
+            padding: 14px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .brand-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #2563eb, #1e3a8a);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 15px rgba(37, 99, 235, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .logo {
+            font-size: 21px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+        }
+
+        .logo a {
+            color: #ffffff;
+            text-decoration: none;
+        }
+
+        .logo .brand-highlight {
+            color: #fbbf24;
+            font-weight: 800;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .nav-links a {
+            color: #cbd5e1;
+            text-decoration: none;
+            font-size: 13.5px;
+            font-weight: 600;
+            padding: 8px 14px;
+            border-radius: var(--radius-sm);
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .nav-links a:hover {
+            color: #ffffff;
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+
+        .nav-user-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 4px 12px 4px 6px;
+            border-radius: var(--radius-full);
+            font-size: 13px;
+            margin-left: 6px;
+        }
+
+        .nav-user-avatar {
+            width: 24px;
+            height: 24px;
+            background: #fbbf24;
+            color: #0f172a;
+            border-radius: var(--radius-full);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .role-tag {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 2px 7px;
+            border-radius: var(--radius-full);
+        }
+
+        .role-tag-student {
+            background: rgba(37, 99, 235, 0.25);
+            color: #93c5fd;
+            border: 1px solid rgba(147, 197, 253, 0.3);
+        }
+
+        .role-tag-instructor {
+            background: rgba(245, 158, 11, 0.25);
+            color: #fcd34d;
+            border: 1px solid rgba(252, 211, 77, 0.3);
+        }
+
+        .nav-logout-btn {
+            color: #fca5a5 !important;
+            background: rgba(239, 68, 68, 0.1) !important;
+            border: 1px solid rgba(239, 68, 68, 0.2) !important;
+        }
+
+        .nav-logout-btn:hover {
+            background: rgba(239, 68, 68, 0.2) !important;
+            color: #fee2e2 !important;
+        }
+
+        .page-wrapper {
+            flex: 1;
+            padding: 32px 20px 48px;
+            max-width: 1140px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .container {
+            background: #ffffff;
+            border: 1px solid var(--slate-200);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        .messages {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 24px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .messages li {
+            padding: 13px 18px;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .messages .success {
+            background-color: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .messages .error {
+            background-color: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .messages .warning {
+            background-color: #fffbeb;
+            color: #92400e;
+            border: 1px solid #fde68a;
+        }
+
+        .messages .info {
+            background-color: #f0f9ff;
+            color: #0369a1;
+            border: 1px solid #bae6fd;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background-color: #003366;
+            color: #ffffff;
+            padding: 9px 18px;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: inherit;
+            transition: all 0.18s ease;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        .btn:hover {
+            background-color: #172554;
+            color: #ffffff;
+            transform: translateY(-1px);
+        }
+
+        .btn-gold {
+            background-color: #FFD700;
+            color: #003366;
+            font-weight: 700;
+        }
+
+        .btn-gold:hover {
+            background-color: #e6c200;
+            color: #002244;
+        }
+
+        .btn-danger {
+            background-color: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background-color: #dc2626;
+        }
+
+        .btn-secondary {
+            background-color: #ffffff;
+            color: #334155;
+            border: 1px solid #cbd5e1;
+        }
+
+        .btn-secondary:hover {
+            background-color: #f1f5f9;
+            color: #0f172a;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            border-radius: var(--radius-full);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .badge-success {
+            background-color: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .badge-danger {
+            background-color: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .badge-warning {
+            background-color: #fffbeb;
+            color: #92400e;
+            border: 1px solid #fde68a;
+        }
+
+        .badge-info {
+            background-color: #f0f9ff;
+            color: #0369a1;
+            border: 1px solid #bae6fd;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 13.5px;
+        }
+
+        th, td {
+            padding: 13px 16px;
+            border: 1px solid var(--slate-200);
+            text-align: left;
+        }
+
+        th {
+            background-color: #0f172a;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        tbody tr:hover {
+            background-color: #f8fafc;
+        }
+
+        input[type="text"], input[type="email"], input[type="password"], input[type="number"], input[type="datetime-local"], select, textarea {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1.5px solid var(--slate-300);
+            border-radius: var(--radius-sm);
+            font-family: inherit;
+            font-size: 14px;
+            box-sizing: border-box;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+
+        .portal-footer {
+            background: #ffffff;
+            border-top: 1px solid var(--slate-200);
+            padding: 24px 32px;
+            margin-top: auto;
+            font-size: 13px;
+            color: var(--slate-600);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        @media (max-width: 768px) {
+            .navbar {
+                padding: 14px 18px;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+            }
+            .brand-wrapper { justify-content: space-between; }
+            .nav-links { overflow-x: auto; padding-bottom: 4px; }
+            .page-wrapper { padding: 16px 12px; }
+            .container { padding: 20px 16px; }
+            .portal-footer { flex-direction: column; text-align: center; }
+        }
     </style>
+    {% block extra_head %}{% endblock %}
 </head>
+
 <body>
+
+    <!-- Modern Header / Navigation Bar -->
     <nav class="navbar">
-        <div class="logo">securITquiz</div>
-        <div>
-            <a href="{% url 'home' %}">Home</a>
-            <a href="{% url 'student_dashboard' %}">Student Dashboard</a>
-            <a href="{% url 'instructor_dashboard' %}">Instructor Dashboard</a>
+        <div class="brand-wrapper">
+            <div class="brand-icon">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1 6h2v2h-2V7zm0 4h2v6h-2v-6z" fill="#fbbf24"/>
+                </svg>
+            </div>
+            <div class="logo">
+                <a href="{% url 'home' %}">securIT<span class="brand-highlight">quiz</span></a>
+            </div>
+            <span style="background: rgba(255,255,255,0.1); color: #94a3b8; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 9999px; letter-spacing: 0.5px; margin-left: 4px;">
+                FIPS 186-3 DSA
+            </span>
+        </div>
+
+        <div class="nav-links">
+            <a href="{% url 'home' %}">
+                <span>🏠 Home</span>
+            </a>
+
+            {% if user.is_authenticated %}
+                {% for group in user.groups.all %}
+                    {% if group.name == "Student" %}
+                        <a href="{% url 'student_dashboard' %}">
+                            <span>📝 Student Dashboard</span>
+                        </a>
+                        <a href="{% url 'student_profile' %}">
+                            <span>👤 My Profile</span>
+                        </a>
+                    {% elif group.name == "Instructor" %}
+                        <a href="{% url 'instructor_dashboard' %}">
+                            <span>📊 Instructor Dashboard</span>
+                        </a>
+                        <a href="{% url 'security_logs' %}">
+                            <span>🛡️ Security Logs</span>
+                        </a>
+                    {% endif %}
+                {% endfor %}
+
+                <div class="nav-user-chip">
+                    <div class="nav-user-avatar">{{ user.username|make_list|first|upper }}</div>
+                    <span class="nav-user-name">{{ user.username }}</span>
+                    {% for group in user.groups.all %}
+                        {% if group.name == "Student" %}
+                            <span class="role-tag role-tag-student">Student</span>
+                        {% elif group.name == "Instructor" %}
+                            <span class="role-tag role-tag-instructor">Instructor</span>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+
+                <a href="{% url 'logout' %}" class="nav-logout-btn">
+                    <span>Sign Out</span>
+                </a>
+
+            {% else %}
+                <a href="{% url 'login' %}">Sign In</a>
+                <a href="{% url 'register' %}" class="btn-gold" style="padding: 7px 16px; border-radius: var(--radius-sm);">Register</a>
+            {% endif %}
         </div>
     </nav>
-    <div class="container">
-        {% block content %}{% endblock %}
+
+    <!-- Main Content Canvas -->
+    <main class="page-wrapper">
+        <div class="container">
+            {% if messages %}
+                <ul class="messages">
+                    {% for message in messages %}
+                        <li class="{{ message.tags }}">
+                            {% if message.tags == 'success' %}
+                                <span style="font-size: 16px;">✓</span>
+                            {% elif message.tags == 'error' %}
+                                <span style="font-size: 16px;">⚠️</span>
+                            {% elif message.tags == 'warning' %}
+                                <span style="font-size: 16px;">⚡</span>
+                            {% else %}
+                                <span style="font-size: 16px;">ℹ️</span>
+                            {% endif %}
+                            <span>{{ message }}</span>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <!-- Elevated Footer -->
+    <footer class="portal-footer">
+        <div class="portal-footer-security">
+            <span class="portal-footer-security-pill" style="display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 600; color: #334155; border: 1px solid #e2e8f0;">
+                <span style="color: #10b981;">●</span> DSA Cryptographic Integrity
+            </span>
+            <span class="portal-footer-security-pill" style="display: inline-flex; align-items: center; gap: 6px; background: #f1f5f9; padding: 4px 10px; border-radius: 9999px; font-size: 11px; font-weight: 600; color: #334155; border: 1px solid #e2e8f0;">
+                <span style="color: #2563eb;">●</span> Single-Session Active Guard
+            </span>
+        </div>
+        <div>
+            &copy; 2026 <strong>securITquiz</strong> Examination Management & Security System. All rights reserved.
+        </div>
+    </footer>
+
+    {% if user.is_authenticated %}
+    <!-- Modern Two-Device Mutual Authorization Security Modal (Device A) -->
+    <div id="device-auth-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(6px); z-index: 99999; justify-content: center; align-items: center; padding: 20px;">
+        <div style="background: #ffffff; border-radius: 16px; max-width: 480px; width: 100%; padding: 30px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35); text-align: center; border: 1px solid rgba(255, 255, 255, 0.2); position: relative;">
+            
+            <!-- Animated Warning Radar Badge -->
+            <div style="width: 64px; height: 64px; margin: 0 auto 16px; background: #fef2f2; border: 2px solid #fecaca; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 28px; box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.1);">
+                🛡️
+            </div>
+
+            <h3 style="color: #0f172a; margin: 0 0 8px 0; font-size: 20px; font-weight: 800;">
+                New Device Login Attempt
+            </h3>
+            <p style="font-size: 14px; color: #475569; line-height: 1.5; margin: 0 0 20px 0;">
+                Another device is attempting to access this account (<strong>{{ user.username }}</strong>). Under the Single Active Session policy, only one device can maintain active authorization.
+            </p>
+
+            <!-- Metadata Box -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; margin-bottom: 22px; text-align: left; font-size: 13.5px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="color: #64748b; font-weight: 600;">Requesting IP:</span>
+                    <code id="auth-req-ip" style="background: #ffffff; border: 1px solid #cbd5e1; padding: 2px 8px; border-radius: 4px; font-weight: 700; color: #1e3a8a;">127.0.0.1</code>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #64748b; font-weight: 600;">Expires in:</span>
+                    <span style="font-weight: 800; color: #ef4444; font-size: 15px; font-family: monospace;">
+                        <span id="auth-req-timer">60</span>s
+                    </span>
+                </div>
+            </div>
+
+            <p style="font-size: 13px; color: #64748b; margin: 0 0 22px 0; line-height: 1.4;">
+                If you <strong>Approve</strong>, session authority transfers immediately and this browser will be signed out. If you <strong>Deny</strong>, the incoming attempt is blocked.
+            </p>
+
+            <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+                <button type="button" id="btn-approve-device" class="btn" style="background-color: #10b981; color: white; padding: 11px 22px; font-size: 13.5px; border-radius: 8px; font-weight: 700; flex: 1; min-width: 180px;">
+                    ✓ Approve Transfer
+                </button>
+                <button type="button" id="btn-deny-device" class="btn btn-danger" style="padding: 11px 22px; font-size: 13.5px; border-radius: 8px; font-weight: 700; flex: 1; min-width: 140px;">
+                    ✕ Deny & Keep
+                </button>
+            </div>
+        </div>
     </div>
+
+    <script>
+        (function() {
+            let activeRequestId = null;
+            let countdownTimer = null;
+            let currentRemaining = 60;
+            const modal = document.getElementById('device-auth-modal');
+            const ipEl = document.getElementById('auth-req-ip');
+            const timerEl = document.getElementById('auth-req-timer');
+            const btnApprove = document.getElementById('btn-approve-device');
+            const btnDeny = document.getElementById('btn-deny-device');
+
+            function getCookie(name) {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            }
+
+            function showModal(req) {
+                activeRequestId = req.request_id;
+                ipEl.textContent = req.ip_address || 'Unknown';
+                currentRemaining = req.remaining_seconds || 60;
+                timerEl.textContent = currentRemaining;
+                modal.style.display = 'flex';
+
+                if (countdownTimer) clearInterval(countdownTimer);
+                countdownTimer = setInterval(() => {
+                    if (currentRemaining > 0) {
+                        currentRemaining--;
+                        timerEl.textContent = currentRemaining;
+                    } else {
+                        clearInterval(countdownTimer);
+                        hideModal();
+                    }
+                }, 1000);
+            }
+
+            function hideModal() {
+                modal.style.display = 'none';
+                activeRequestId = null;
+                if (countdownTimer) clearInterval(countdownTimer);
+            }
+
+            function checkPendingAuth() {
+                fetch("{% url 'pending_device_request' %}", {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.has_request) {
+                        if (!activeRequestId || activeRequestId !== data.request_id) {
+                            showModal(data);
+                        }
+                    } else {
+                        if (activeRequestId) {
+                            hideModal();
+                        }
+                    }
+                })
+                .catch(err => console.debug("Pending device check:", err));
+            }
+
+            function respondRequest(decision) {
+                if (!activeRequestId) return;
+                const reqId = activeRequestId;
+                const csrftoken = getCookie('csrftoken');
+
+                fetch("{% url 'respond_device_request' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrftoken,
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({
+                        request_id: reqId,
+                        decision: decision
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    hideModal();
+                    if (data.status === 'ok') {
+                        if (data.logged_out && data.redirect_url) {
+                            window.location.href = data.redirect_url;
+                        }
+                    }
+                })
+                .catch(err => {
+                    console.error("Error responding to device request:", err);
+                    hideModal();
+                });
+            }
+
+            btnApprove.addEventListener('click', () => respondRequest('approve'));
+            btnDeny.addEventListener('click', () => respondRequest('deny'));
+
+            // Check every 3 seconds
+            setInterval(checkPendingAuth, 3000);
+            checkPendingAuth();
+        })();
+    </script>
+    {% endif %}
+
+    {% block extra_scripts %}{% endblock %}
 </body>
 </html>

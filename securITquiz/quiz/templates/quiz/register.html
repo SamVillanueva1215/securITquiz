@@ -1,61 +1,71 @@
-
 {% extends 'quiz/base.html' %}
 
+{% block title %}Student Registration &bull; securITquiz{% endblock %}
+
 {% block content %}
+<div style="max-width: 500px; margin: 20px auto 30px;">
 
-<div style="max-width: 500px; margin: auto;">
-
-    <h2 style="text-align: center; color: #003366;">
-        Student Registration
-    </h2>
-
-    <p style="text-align: center; color: #666;">
-        Create your securITquiz student account.
-    </p>
-
-    <form method="POST">
-        {% csrf_token %}
-
-        {% for field in form %}
-            <div style="margin-bottom: 18px;">
-
-                <label for="{{ field.id_for_label }}"
-                       style="display: block; font-weight: bold;
-                              margin-bottom: 6px;">
-                    {{ field.label }}
-                </label>
-
-                {{ field }}
-
-                {% for error in field.errors %}
-                    <p style="color: red; font-size: 13px;">
-                        {{ error }}
-                    </p>
-                {% endfor %}
-
+    <!-- Registration Card -->
+    <div style="background: #ffffff; border: 1px solid var(--slate-200); border-radius: 16px; padding: 36px 32px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.04);">
+        
+        <div style="text-align: center; margin-bottom: 26px;">
+            <div style="width: 52px; height: 52px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; font-size: 24px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);">
+                🎓
             </div>
-        {% endfor %}
+            <h2 style="color: #0f172a; font-size: 24px; font-weight: 800; margin: 0 0 6px 0; letter-spacing: -0.02em;">
+                Student Registration
+            </h2>
+            <p style="color: #64748b; font-size: 14px; margin: 0;">
+                Create your securITquiz student account.
+            </p>
+        </div>
 
         {% if form.non_field_errors %}
             {% for error in form.non_field_errors %}
-                <p style="color: red;">{{ error }}</p>
+                <div style="padding: 12px 16px; background-color: #fef2f2; color: #991b1b; border: 1px solid #fecaca; border-radius: 8px; margin-bottom: 20px; font-size: 13.5px; display: flex; align-items: center; gap: 8px;">
+                    <span>⚠️</span>
+                    <span>{{ error }}</span>
+                </div>
             {% endfor %}
         {% endif %}
 
-        <button type="submit" class="btn"
-                style="width: 100%; margin-top: 10px;">
-            Create Student Account
-        </button>
+        <form method="POST">
+            {% csrf_token %}
 
-    </form>
+            {% for field in form %}
+                <div style="margin-bottom: 18px;">
+                    <label for="{{ field.id_for_label }}" style="display: block; font-weight: 600; font-size: 13px; color: #1e293b; margin-bottom: 6px;">
+                        {{ field.label }}
+                    </label>
 
-    <p style="text-align: center; margin-top: 20px;">
-        Already have an account?
-<a href="{% url 'login' %}" style="color: #003366;">
-    Login here
-</a>
-    </p>
+                    {{ field }}
+
+                    {% for error in field.errors %}
+                        <p style="color: #ef4444; font-size: 12.5px; margin: 5px 0 0 0; font-weight: 500;">
+                            {{ error }}
+                        </p>
+                    {% endfor %}
+
+                    {% if field.help_text %}
+                        <p style="font-size: 11.5px; color: #94a3b8; margin: 4px 0 0 0;">
+                            {{ field.help_text }}
+                        </p>
+                    {% endif %}
+                </div>
+            {% endfor %}
+
+            <button type="submit" class="btn" style="width: 100%; padding: 12px; font-size: 15px; background-color: #003366; color: #ffffff; border-radius: 8px; font-weight: 700; margin-top: 10px; box-shadow: 0 2px 4px rgba(0, 51, 102, 0.2);">
+                Create Student Account
+            </button>
+        </form>
+
+        <div style="text-align: center; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--slate-200); font-size: 13.5px; color: #64748b;">
+            Already have an account?
+            <a href="{% url 'login' %}" style="color: #003366; font-weight: 700; text-decoration: none; margin-left: 4px;">
+                Login here &rarr;
+            </a>
+        </div>
+    </div>
 
 </div>
-
 {% endblock %}
