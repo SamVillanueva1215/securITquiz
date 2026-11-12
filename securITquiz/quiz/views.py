@@ -17,6 +17,7 @@ from .models import (
     QuizSubmission,
     Question,
     StudentProfile,
+    InstructorProfile,
     ActiveSession,
     DeviceAuthorizationRequest,
     QuizAttempt,
@@ -25,13 +26,14 @@ from .models import (
 )
 from .forms import (
     StudentRegistrationForm,
+    InstructorRegistrationForm,
     EmailOrUsernameAuthenticationForm,
     QuizForm,
     PinVerificationForm,
     validate_questions_data,
     generate_secure_pin
 )
-from .decorators import student_required, instructor_required
+from .decorators import student_required, instructor_required, admin_required
 from .crypto import generate_dsa_signature, verify_dsa_signature
 from .middleware import get_client_ip, cleanup_expired_sessions, get_or_create_device_id
 from .notifications import (
@@ -56,6 +58,26 @@ def home(request):
 
 
 def register(request):
+    """
+    Public student registration endpoint.
+    Preserves existing student registration functionality.
+    Guards against unauthorized public administrator registration attempts.
+    """
+    role_requested = (request.GET.get('role') or request.POST.get('role') or '').lower()
+    if role_requested in ('admin', 'administrator', 'superadmin', 'root'):
+        return render(
+            request,
+            'quiz/403.html',
+            {
+                'required_roles': ['Authorized Administrator'],
+                'user_roles': ['Public Visitor'],
+                'denial_reason': 'Public Administrator registration is strictly prohibited.',
+            },
+            status=403
+        )
+    if role_requested == 'instructor':
+        return redirect('register_instructor')
+
     if request.user.is_authenticated:
         if request.user.groups.filter(name='Instructor').exists():
             return redirect('instructor_dashboard')
@@ -83,7 +105,60 @@ def register(request):
         form = StudentRegistrationForm()
 
     return render(request, 'quiz/register.html', {
-        'form': form
+        'form': form,
+        'registration_type': 'student',
+    })
+
+
+def register_instructor(request):
+    """
+    Public instructor registration endpoint.
+    Newly registered instructors automatically receive an InstructorProfile with PENDING status.
+    Guards against unauthorized public administrator registration attempts.
+    """
+    role_requested = (request.GET.get('role') or request.POST.get('role') or '').lower()
+    if role_requested in ('admin', 'administrator', 'superadmin', 'root'):
+        return render(
+            request,
+            'quiz/403.html',
+            {
+                'required_roles': ['Authorized Administrator'],
+                'user_roles': ['Public Visitor'],
+                'denial_reason': 'Public Administrator registration is strictly prohibited.',
+            },
+            status=403
+        )
+
+    if request.user.is_authenticated:
+        if request.user.groups.filter(name='Instructor').exists():
+            return redirect('instructor_dashboard')
+        return redirect('student_dashboard')
+
+    if request.method == 'POST':
+        form = InstructorRegistrationForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            ip = get_client_ip(request)
+            AuditLog.objects.create(
+                actor=user,
+                actor_username=user.username,
+                action='INSTRUCTOR_REGISTERED',
+                ip_address=ip,
+                status='PENDING',
+                details=f"Instructor account registered (Pending Approval): {user.username} ({user.email})"
+            )
+            messages.success(
+                request,
+                'Your instructor application has been submitted successfully and is pending administrator approval. '
+                'You will not be able to access instructor features until an administrator approves your account.'
+            )
+            return redirect('login')
+    else:
+        form = InstructorRegistrationForm()
+
+    return render(request, 'quiz/register_instructor.html', {
+        'form': form,
+        'registration_type': 'instructor',
     })
 
 
@@ -1324,8 +1399,11 @@ def instructor_dashboard(request):
         created_by=request.user
     ).order_by('-created_at')
 
+    is_admin = request.user.groups.filter(name='Administrator').exists() or request.user.is_superuser
+
     return render(request, 'quiz/instructor_dashboard.html', {
-        'quizzes': quizzes
+        'quizzes': quizzes,
+        'is_administrator': is_admin,
     })
 
 
@@ -1653,11 +1731,12 @@ def instructor_submission_detail(request, submission_id):
     })
 
 
-@instructor_required
+@admin_required
 def security_logs(request):
     """
     Displays the centralized system audit trail and login monitoring events.
-    Restricted to authorized instructors and administrators.
+    Restricted strictly to system Administrators.
+    Ordinary instructors and students are denied access with HTTP 403.
     """
     audit_records = AuditLog.objects.select_related('quiz', 'actor').order_by('-timestamp')[:200]
     security_records = SecurityLog.objects.order_by('-timestamp')[:200]

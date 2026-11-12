@@ -6,7 +6,7 @@ from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
 from django.db import transaction
 
-from .models import StudentProfile, Quiz, Question
+from .models import StudentProfile, InstructorProfile, Quiz, Question
 
 
 class EmailOrUsernameAuthenticationForm(AuthenticationForm):
@@ -102,6 +102,89 @@ class StudentRegistrationForm(UserCreationForm):
             )
 
             user.groups.add(student_group)
+
+        return user
+
+
+class InstructorRegistrationForm(UserCreationForm):
+    """
+    Public registration form for academic instructors.
+    Automatically assigns the Instructor role and initializes an InstructorProfile
+    with PENDING status awaiting Administrator approval.
+    """
+    full_name = forms.CharField(
+        max_length=200,
+        label="Full Name",
+        widget=forms.TextInput(attrs={
+            'placeholder': 'e.g. Dr. Jane Smith',
+            'style': 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'
+        })
+    )
+
+    department = forms.CharField(
+        max_length=200,
+        required=False,
+        label="Academic Department / Faculty",
+        widget=forms.TextInput(attrs={
+            'placeholder': 'e.g. Department of Computer Science',
+            'style': 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'
+        })
+    )
+
+    email = forms.EmailField(
+        label="University Email",
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'e.g. jsmith@university.edu',
+            'style': 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;'
+        })
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            "full_name",
+            "department",
+            "email",
+            "username",
+        )
+
+    def clean_email(self):
+        email = self.cleaned_data.get("email")
+
+        if User.objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError(
+                "This email address is already registered."
+            )
+
+        return email
+
+    @transaction.atomic
+    def save(self, commit=True):
+        user = super().save(commit=False)
+
+        user.email = self.cleaned_data["email"]
+        full_name = self.cleaned_data["full_name"].strip()
+        names = full_name.split()
+        user.first_name = names[0] if names else ""
+        user.last_name = " ".join(names[1:]) if len(names) > 1 else ""
+        user.is_staff = False
+        user.is_superuser = False
+
+        if commit:
+            user.save()
+
+            InstructorProfile.objects.create(
+                user=user,
+                full_name=full_name,
+                department=self.cleaned_data.get("department", "").strip(),
+                status="PENDING"
+            )
+
+            instructor_group, _ = Group.objects.get_or_create(
+                name="Instructor"
+            )
+
+            user.groups.add(instructor_group)
 
         return user
 

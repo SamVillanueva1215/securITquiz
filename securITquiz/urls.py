@@ -16,6 +16,7 @@ urlpatterns = [
 
     # Shared Authentication & Mutual Two-Device Authorization
     path('register/', views.register, name='register'),
+    path('register/instructor/', views.register_instructor, name='register_instructor'),
     path('login/', views.user_login, name='login'),
     path('login/waiting-approval/', views.waiting_for_approval, name='waiting_for_approval'),
     path('login/check-approval-status/', views.check_approval_status, name='check_approval_status'),

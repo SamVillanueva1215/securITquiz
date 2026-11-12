@@ -15,6 +15,12 @@
         You do not have permission to access this page. This resource is strictly restricted by Role-Based Access Control (RBAC).
     </p>
 
+    {% if denial_reason %}
+    <div style="background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 6px; padding: 12px 15px; margin: 15px 0; font-size: 14px; text-align: left;">
+        <strong>Details:</strong> {{ denial_reason }}
+    </div>
+    {% endif %}
+
     <div style="background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; padding: 15px; margin: 25px 0; text-align: left;">
         <p style="margin: 5px 0;"><strong>Required Role:</strong> 
             {% for role in required_roles %}

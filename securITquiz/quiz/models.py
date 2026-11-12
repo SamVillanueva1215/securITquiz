@@ -1,4 +1,5 @@
 import datetime
+from django.apps import apps
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -62,6 +63,50 @@ class InstructorProfile(models.Model):
 
     def is_authorized(self):
         return self.status == 'APPROVED'
+
+    def approve(self, reviewer):
+        """
+        Approves the instructor application.
+        Only users in the Administrator group or superusers may approve.
+        Records reviewer, review timestamp, and clears any previous rejection reason.
+        """
+        if not reviewer or not (reviewer.is_superuser or reviewer.groups.filter(name='Administrator').exists()):
+            raise PermissionError("Only administrators are authorized to approve instructor profiles.")
+        self.status = 'APPROVED'
+        self.reviewed_by = reviewer
+        self.reviewed_at = timezone.now()
+        self.rejection_reason = ''
+        self.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+        AuditLog = apps.get_model('quiz', 'AuditLog')
+        AuditLog.objects.create(
+            actor=reviewer,
+            actor_username=reviewer.username,
+            action='INSTRUCTOR_APPROVED',
+            status='APPROVED',
+            details=f"Instructor '{self.user.username}' was approved by administrator '{reviewer.username}'."
+        )
+
+    def reject(self, reviewer, reason=''):
+        """
+        Rejects the instructor application.
+        Only users in the Administrator group or superusers may reject.
+        Records reviewer, review timestamp, and rejection reason.
+        """
+        if not reviewer or not (reviewer.is_superuser or reviewer.groups.filter(name='Administrator').exists()):
+            raise PermissionError("Only administrators are authorized to reject instructor profiles.")
+        self.status = 'REJECTED'
+        self.reviewed_by = reviewer
+        self.reviewed_at = timezone.now()
+        self.rejection_reason = reason or ''
+        self.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+        AuditLog = apps.get_model('quiz', 'AuditLog')
+        AuditLog.objects.create(
+            actor=reviewer,
+            actor_username=reviewer.username,
+            action='INSTRUCTOR_REJECTED',
+            status='REJECTED',
+            details=f"Instructor '{self.user.username}' was rejected by administrator '{reviewer.username}'. Reason: {self.rejection_reason}"
+        )
 
     def __str__(self):
         return f"{self.full_name} ({self.user.username}) [{self.status}]"

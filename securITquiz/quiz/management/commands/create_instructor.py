@@ -1,6 +1,7 @@
 import getpass
 from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth.models import User, Group
+from quiz.models import InstructorProfile
 
 
 class Command(BaseCommand):
@@ -96,9 +97,19 @@ class Command(BaseCommand):
         # Assign Instructor group
         user.groups.add(instructor_group)
 
+        # Create approved InstructorProfile
+        full_name = f"{first_name} {last_name}".strip() or username
+        InstructorProfile.objects.get_or_create(
+            user=user,
+            defaults={
+                'full_name': full_name,
+                'status': 'APPROVED',
+            }
+        )
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"\nSuccessfully created Instructor '{user.username}' ({user.email}) "
-                f"with role 'Instructor'."
+                f"with role 'Instructor' and APPROVED status."
             )
         )

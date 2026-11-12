@@ -4,7 +4,9 @@
         <h2 style="color: #003366; margin: 0;">Instructor Dashboard</h2>
         <div style="display: flex; gap: 10px;">
             <a href="{% url 'create_quiz' %}" class="btn">+ Create New Quiz</a>
-            <a href="{% url 'security_logs' %}" class="btn btn-secondary">🛡️ Security Logs</a>
+            {% if is_administrator %}
+                <a href="{% url 'security_logs' %}" class="btn btn-secondary">🛡️ Security Logs</a>
+            {% endif %}
         </div>
     </div>
     

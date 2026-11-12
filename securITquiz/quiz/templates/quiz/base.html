@@ -227,9 +227,15 @@
                         <a href="{% url 'student_profile' %}">My Profile</a>
                     {% elif group.name == "Instructor" %}
                         <a href="{% url 'instructor_dashboard' %}">Instructor Dashboard</a>
+                    {% elif group.name == "Administrator" %}
                         <a href="{% url 'security_logs' %}">Security Logs</a>
                     {% endif %}
                 {% endfor %}
+                {% if user.is_superuser %}
+                    {% if not user.groups.all or "Administrator" not in user.groups.values_list %}
+                        <a href="{% url 'security_logs' %}">Security Logs</a>
+                    {% endif %}
+                {% endif %}
 
                 <span style="color: #FFD700; font-size: 14px; margin-left: 15px;">
                     ({{ user.username }})

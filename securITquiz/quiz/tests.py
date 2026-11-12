@@ -5,7 +5,7 @@ from django.contrib.auth.models import User, Group
 from django.utils import timezone
 from django.urls import reverse
 
-from quiz.models import StudentProfile, Quiz, Question, QuizSubmission
+from quiz.models import StudentProfile, InstructorProfile, Quiz, Question, QuizSubmission
 from quiz.forms import QuizForm, validate_questions_data, generate_secure_pin
 from quiz.crypto import generate_dsa_signature, verify_dsa_signature
 
@@ -25,6 +25,11 @@ class RoleBasedAccessControlTests(TestCase):
             password='SecretPassword123!'
         )
         self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Bob Instructor',
+            status='APPROVED'
+        )
 
         # Create a test student
         self.student = User.objects.create_user(
@@ -116,6 +121,11 @@ class CreateQuizUnitAndIntegrationTests(TestCase):
             password='SecretPassword123!'
         )
         self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Carol Instructor',
+            status='APPROVED'
+        )
 
         self.student = User.objects.create_user(
             username='student_dave',
@@ -328,6 +338,11 @@ class TakeQuizUnitAndIntegrationTests(TestCase):
         self.instructor.set_unusable_password()
         self.instructor.save()
         self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Severus Snape',
+            status='APPROVED'
+        )
 
         self.student = User(username='student_hermione', email='hermione@hogwarts.edu')
         self.student.set_unusable_password()
@@ -520,12 +535,22 @@ class InstructorQuizResultsTests(TestCase):
         self.instructor_a.set_unusable_password()
         self.instructor_a.save()
         self.instructor_a.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor_a,
+            full_name='Instructor A',
+            status='APPROVED'
+        )
 
         # Instructor B (non-owner)
         self.instructor_b = User(username='instructor_b', email='b@uni.edu')
         self.instructor_b.set_unusable_password()
         self.instructor_b.save()
         self.instructor_b.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor_b,
+            full_name='Instructor B',
+            status='APPROVED'
+        )
 
         # Student
         self.student = User(username='student_harry', email='harry@uni.edu')
@@ -676,11 +701,21 @@ class EditQuizUnitAndIntegrationTests(TestCase):
         self.instructor_owner.set_unusable_password()
         self.instructor_owner.save()
         self.instructor_owner.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor_owner,
+            full_name='Minerva McGonagall',
+            status='APPROVED'
+        )
 
         self.instructor_other = User(username='prof_flitwick', email='filius@hogwarts.edu')
         self.instructor_other.set_unusable_password()
         self.instructor_other.save()
         self.instructor_other.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor_other,
+            full_name='Filius Flitwick',
+            status='APPROVED'
+        )
 
         self.student = User(username='student_neville', email='neville@hogwarts.edu')
         self.student.set_unusable_password()
@@ -916,6 +951,11 @@ class IdentificationQuestionTests(TestCase):
         self.instructor.set_unusable_password()
         self.instructor.save()
         self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Filius Flitwick',
+            status='APPROVED'
+        )
 
         self.student = User(username='student_luna', email='luna@hogwarts.edu')
         self.student.set_unusable_password()
@@ -1046,6 +1086,11 @@ class AccessPinVerificationTests(TestCase):
         self.instructor.set_unusable_password()
         self.instructor.save()
         self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Pomona Sprout',
+            status='APPROVED'
+        )
 
         self.student = User(username='student_ginny', email='ginny@hogwarts.edu')
         self.student.set_unusable_password()
@@ -1188,6 +1233,11 @@ class DsaSignatureVersioningAndIntegrityTests(TestCase):
         self.instructor.set_unusable_password()
         self.instructor.save()
         self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Septima Vector',
+            status='APPROVED'
+        )
 
         self.student = User(username='student_cho', email='cho@hogwarts.edu')
         self.student.set_unusable_password()
@@ -1371,6 +1421,11 @@ class SingleActiveSessionTests(TestCase):
         )
         instructor_group, _ = Group.objects.get_or_create(name='Instructor')
         self.instructor.groups.add(instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Filius Flitwick',
+            status='APPROVED'
+        )
 
     def test_first_login_establishes_active_session(self):
         """First device login establishes ActiveSession record."""
@@ -1625,6 +1680,11 @@ class ExaminationSecurityAndLifecycleTests(TestCase):
         self.instructor = User.objects.create_user(username='prof_sprout', email='sprout@hogwarts.edu', password='Pass')
         instructor_group, _ = Group.objects.get_or_create(name='Instructor')
         self.instructor.groups.add(instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Pomona Sprout',
+            status='APPROVED'
+        )
 
         self.quiz = Quiz.objects.create(
             title='Herbology Timed Exam',
@@ -1717,6 +1777,11 @@ class QuizManagementAndResultsReleaseTests(TestCase):
         self.instructor = User.objects.create_user(username='prof_vector', email='vector@hogwarts.edu', password='Pass')
         instructor_group, _ = Group.objects.get_or_create(name='Instructor')
         self.instructor.groups.add(instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Septima Vector',
+            status='APPROVED'
+        )
 
         self.student = User.objects.create_user(username='stu_anthony', email='anthony@hogwarts.edu', password='Pass')
         student_group, _ = Group.objects.get_or_create(name='Student')
@@ -1840,10 +1905,19 @@ class AuditAndSecurityTests(TestCase):
         self.instructor = User.objects.create_user(username='prof_sinistra', email='sinistra@hogwarts.edu', password='Pass')
         instructor_group, _ = Group.objects.get_or_create(name='Instructor')
         self.instructor.groups.add(instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Aurora Sinistra',
+            status='APPROVED'
+        )
 
         self.student = User.objects.create_user(username='stu_dean', email='dean@hogwarts.edu', password='Pass')
         student_group, _ = Group.objects.get_or_create(name='Student')
         self.student.groups.add(student_group)
+
+        self.admin_user = User.objects.create_user(username='admin_albus', email='albus@hogwarts.edu', password='Pass')
+        admin_group, _ = Group.objects.get_or_create(name='Administrator')
+        self.admin_user.groups.add(admin_group)
 
     def test_student_denied_access_to_security_logs(self):
         """Ordinary students are denied access to security logs with HTTP 403."""
@@ -1851,8 +1925,14 @@ class AuditAndSecurityTests(TestCase):
         res = self.client.get(reverse('security_logs'))
         self.assertEqual(res.status_code, 403)
 
-    def test_instructor_can_view_security_logs(self):
-        """Instructors can view centralized audit logs."""
+    def test_ordinary_instructor_denied_from_security_logs(self):
+        """Ordinary instructors (even if approved) are denied access to security logs with HTTP 403."""
+        self.client.force_login(self.instructor)
+        res = self.client.get(reverse('security_logs'))
+        self.assertEqual(res.status_code, 403)
+
+    def test_administrator_can_view_security_logs(self):
+        """Administrators can view centralized system security and audit logs."""
         AuditLog.objects.create(
             actor=self.instructor,
             actor_username='prof_sinistra',
@@ -1860,7 +1940,7 @@ class AuditAndSecurityTests(TestCase):
             status='SUCCESS',
             details='Test audit entry'
         )
-        self.client.force_login(self.instructor)
+        self.client.force_login(self.admin_user)
         res = self.client.get(reverse('security_logs'))
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, 'LOGIN_SUCCESS')
@@ -2118,6 +2198,11 @@ class LegacyUnsignedDsaStatusTests(TestCase):
         )
         instructor_group, _ = Group.objects.get_or_create(name='Instructor')
         self.instructor.groups.add(instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor,
+            full_name='Bathsheda Babbling',
+            status='APPROVED'
+        )
 
         self.student = User.objects.create_user(
             username='stu_seamus',
@@ -2166,3 +2251,294 @@ class LegacyUnsignedDsaStatusTests(TestCase):
         res_csv = self.client.get(reverse('export_quiz_results', args=[self.quiz.id]))
         content = res_csv.content.decode('utf-8')
         self.assertIn('UNSIGNED / UNVERIFIED', content)
+
+
+class InstructorAuthorizationAndStatusTests(TestCase):
+    """
+    Phase 2A Tests: Instructor Access Control based on InstructorProfile status.
+    - APPROVED instructors can access instructor views.
+    - PENDING instructors are denied access with HTTP 403.
+    - REJECTED instructors are denied access with HTTP 403.
+    - Missing InstructorProfile records are handled safely and denied with HTTP 403.
+    """
+    def setUp(self):
+        self.client = Client()
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+
+        # Approved Instructor
+        self.approved_user = User.objects.create_user(
+            username='prof_approved', email='approved@uni.edu', password='Pass'
+        )
+        self.approved_user.groups.add(self.instructor_group)
+        self.approved_profile = InstructorProfile.objects.create(
+            user=self.approved_user, full_name='Prof Approved', status='APPROVED'
+        )
+
+        # Pending Instructor
+        self.pending_user = User.objects.create_user(
+            username='prof_pending', email='pending@uni.edu', password='Pass'
+        )
+        self.pending_user.groups.add(self.instructor_group)
+        self.pending_profile = InstructorProfile.objects.create(
+            user=self.pending_user, full_name='Prof Pending', status='PENDING'
+        )
+
+        # Rejected Instructor
+        self.rejected_user = User.objects.create_user(
+            username='prof_rejected', email='rejected@uni.edu', password='Pass'
+        )
+        self.rejected_user.groups.add(self.instructor_group)
+        self.rejected_profile = InstructorProfile.objects.create(
+            user=self.rejected_user,
+            full_name='Prof Rejected',
+            status='REJECTED',
+            rejection_reason='Incomplete academic credentials'
+        )
+
+        # Missing Profile Instructor
+        self.missing_profile_user = User.objects.create_user(
+            username='prof_noprofile', email='noprofile@uni.edu', password='Pass'
+        )
+        self.missing_profile_user.groups.add(self.instructor_group)
+
+        # Sample Quiz owned by approved instructor
+        self.quiz = Quiz.objects.create(
+            title='Sample Quiz',
+            deadline=timezone.now() + timedelta(days=1),
+            access_pin='TEST12',
+            created_by=self.approved_user
+        )
+
+    def test_approved_instructor_can_access_dashboard(self):
+        self.client.force_login(self.approved_user)
+        res = self.client.get(reverse('instructor_dashboard'))
+        self.assertEqual(res.status_code, 200)
+
+    def test_pending_instructor_denied_from_dashboard(self):
+        self.client.force_login(self.pending_user)
+        res = self.client.get(reverse('instructor_dashboard'))
+        self.assertEqual(res.status_code, 403)
+        self.assertContains(res, 'Access Denied', status_code=403)
+        self.assertContains(res, 'Pending Approval', status_code=403)
+
+    def test_rejected_instructor_denied_from_dashboard(self):
+        self.client.force_login(self.rejected_user)
+        res = self.client.get(reverse('instructor_dashboard'))
+        self.assertEqual(res.status_code, 403)
+        self.assertContains(res, 'Access Denied', status_code=403)
+        self.assertContains(res, 'Incomplete academic credentials', status_code=403)
+
+    def test_missing_profile_instructor_denied_from_dashboard(self):
+        self.client.force_login(self.missing_profile_user)
+        res = self.client.get(reverse('instructor_dashboard'))
+        self.assertEqual(res.status_code, 403)
+        self.assertContains(res, 'Access Denied', status_code=403)
+        self.assertContains(res, 'profile not found', status_code=403)
+
+    def test_pending_instructor_denied_from_create_quiz(self):
+        self.client.force_login(self.pending_user)
+        res = self.client.get(reverse('create_quiz'))
+        self.assertEqual(res.status_code, 403)
+
+    def test_rejected_instructor_denied_from_create_quiz(self):
+        self.client.force_login(self.rejected_user)
+        res = self.client.get(reverse('create_quiz'))
+        self.assertEqual(res.status_code, 403)
+
+    def test_missing_profile_denied_from_create_quiz(self):
+        self.client.force_login(self.missing_profile_user)
+        res = self.client.get(reverse('create_quiz'))
+        self.assertEqual(res.status_code, 403)
+
+    def test_pending_instructor_denied_from_edit_quiz(self):
+        self.client.force_login(self.pending_user)
+        res = self.client.get(reverse('edit_quiz', kwargs={'quiz_id': self.quiz.id}))
+        self.assertEqual(res.status_code, 403)
+
+    def test_pending_instructor_denied_from_results(self):
+        self.client.force_login(self.pending_user)
+        res = self.client.get(reverse('instructor_quiz_results', kwargs={'quiz_id': self.quiz.id}))
+        self.assertEqual(res.status_code, 403)
+
+    def test_pending_instructor_denied_from_export(self):
+        self.client.force_login(self.pending_user)
+        res = self.client.get(reverse('export_quiz_results', kwargs={'quiz_id': self.quiz.id}))
+        self.assertEqual(res.status_code, 403)
+
+    def test_pending_instructor_denied_from_toggle_status(self):
+        self.client.force_login(self.pending_user)
+        res = self.client.post(reverse('toggle_quiz_status', kwargs={'quiz_id': self.quiz.id}))
+        self.assertEqual(res.status_code, 403)
+
+    def test_pending_instructor_denied_from_toggle_results(self):
+        self.client.force_login(self.pending_user)
+        res = self.client.post(reverse('toggle_quiz_results', kwargs={'quiz_id': self.quiz.id}))
+        self.assertEqual(res.status_code, 403)
+
+
+class InstructorRegistrationUnitAndIntegrationTests(TestCase):
+    """
+    Phase 2A Tests: Public Instructor Registration & Administrator Guardrails.
+    - Public registration creates User + InstructorProfile with PENDING status.
+    - Assigns Instructor group membership.
+    - Logs INSTRUCTOR_REGISTERED audit event.
+    - Blocks public Administrator registration attempts.
+    - Preserves existing Student registration.
+    """
+    def setUp(self):
+        self.client = Client()
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+
+    def test_public_instructor_registration_success(self):
+        res = self.client.post(reverse('register_instructor'), {
+            'full_name': 'Dr. Alan Turing',
+            'department': 'Computer Science',
+            'email': 'turing@cambridge.edu',
+            'username': 'alan_turing',
+            'password1': 'BletchleyPark1945!',
+            'password2': 'BletchleyPark1945!',
+        })
+        self.assertRedirects(res, reverse('login'))
+
+        user = User.objects.get(username='alan_turing')
+        self.assertEqual(user.email, 'turing@cambridge.edu')
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertTrue(user.groups.filter(name='Instructor').exists())
+        self.assertFalse(user.groups.filter(name='Administrator').exists())
+
+        profile = user.instructor_profile
+        self.assertEqual(profile.status, 'PENDING')
+        self.assertEqual(profile.full_name, 'Dr. Alan Turing')
+        self.assertEqual(profile.department, 'Computer Science')
+        self.assertFalse(profile.is_authorized())
+
+        log = AuditLog.objects.filter(actor=user, action='INSTRUCTOR_REGISTERED').first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.status, 'PENDING')
+
+    def test_newly_registered_instructor_denied_access_until_approved(self):
+        self.client.post(reverse('register_instructor'), {
+            'full_name': 'Dr. Ada Lovelace',
+            'department': 'Mathematics',
+            'email': 'ada@oxford.edu',
+            'username': 'ada_lovelace',
+            'password1': 'AnalyticalEngine1843!',
+            'password2': 'AnalyticalEngine1843!',
+        })
+        user = User.objects.get(username='ada_lovelace')
+        self.client.force_login(user)
+        res = self.client.get(reverse('instructor_dashboard'))
+        self.assertEqual(res.status_code, 403)
+
+    def test_public_registration_blocks_administrator_attempts(self):
+        res1 = self.client.get(reverse('register'), {'role': 'administrator'})
+        self.assertEqual(res1.status_code, 403)
+        self.assertContains(res1, 'Public Administrator registration is strictly prohibited.', status_code=403)
+
+        res2 = self.client.get(reverse('register_instructor'), {'role': 'admin'})
+        self.assertEqual(res2.status_code, 403)
+        self.assertContains(res2, 'Public Administrator registration is strictly prohibited.', status_code=403)
+
+    def test_existing_student_registration_preserved(self):
+        res = self.client.post(reverse('register'), {
+            'full_name': 'Grace Hopper',
+            'student_id': 'STU99001',
+            'email': 'hopper@navy.mil',
+            'username': 'grace_hopper',
+            'password1': 'CobolCompiler1959!',
+            'password2': 'CobolCompiler1959!',
+        })
+        self.assertRedirects(res, reverse('login'))
+        user = User.objects.get(username='grace_hopper')
+        self.assertTrue(user.groups.filter(name='Student').exists())
+        self.assertEqual(user.student_profile.student_id, 'STU99001')
+
+
+class InstructorApprovalFoundationTests(TestCase):
+    """
+    Phase 2A Tests: InstructorProfile approval & rejection lifecycle.
+    - Recording reviewer, timestamp, and rejection reason.
+    - Preventing unauthorized users from approving or rejecting instructors.
+    """
+    def setUp(self):
+        self.admin_group, _ = Group.objects.get_or_create(name='Administrator')
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+
+        self.admin_user = User.objects.create_user(
+            username='admin_user', email='admin@uni.edu', password='Pass'
+        )
+        self.admin_user.groups.add(self.admin_group)
+
+        self.ordinary_instructor = User.objects.create_user(
+            username='prof_ordinary', email='ordinary@uni.edu', password='Pass'
+        )
+        self.ordinary_instructor.groups.add(self.instructor_group)
+
+        self.student_user = User.objects.create_user(
+            username='student_user', email='student@uni.edu', password='Pass'
+        )
+        self.student_user.groups.add(self.student_group)
+
+        self.applicant = User.objects.create_user(
+            username='applicant_jane', email='jane@uni.edu', password='Pass'
+        )
+        self.applicant.groups.add(self.instructor_group)
+        self.profile = InstructorProfile.objects.create(
+            user=self.applicant, full_name='Jane Applicant', status='PENDING'
+        )
+
+    def test_administrator_can_approve_instructor(self):
+        self.profile.approve(self.admin_user)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.status, 'APPROVED')
+        self.assertEqual(self.profile.reviewed_by, self.admin_user)
+        self.assertIsNotNone(self.profile.reviewed_at)
+        self.assertEqual(self.profile.rejection_reason, '')
+        self.assertTrue(self.profile.is_authorized())
+
+        log = AuditLog.objects.filter(actor=self.admin_user, action='INSTRUCTOR_APPROVED').first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.status, 'APPROVED')
+
+    def test_administrator_can_reject_instructor_with_reason(self):
+        self.profile.reject(self.admin_user, reason='Department verification failed')
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.status, 'REJECTED')
+        self.assertEqual(self.profile.reviewed_by, self.admin_user)
+        self.assertIsNotNone(self.profile.reviewed_at)
+        self.assertEqual(self.profile.rejection_reason, 'Department verification failed')
+        self.assertFalse(self.profile.is_authorized())
+
+        log = AuditLog.objects.filter(actor=self.admin_user, action='INSTRUCTOR_REJECTED').first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.status, 'REJECTED')
+
+    def test_approval_clears_previous_rejection_reason(self):
+        self.profile.reject(self.admin_user, reason='Missing transcript')
+        self.profile.approve(self.admin_user)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.status, 'APPROVED')
+        self.assertEqual(self.profile.rejection_reason, '')
+
+    def test_unauthorized_user_cannot_approve_instructor(self):
+        with self.assertRaises(PermissionError):
+            self.profile.approve(self.ordinary_instructor)
+        with self.assertRaises(PermissionError):
+            self.profile.approve(self.student_user)
+        with self.assertRaises(PermissionError):
+            self.profile.approve(None)
+
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.status, 'PENDING')
+
+    def test_unauthorized_user_cannot_reject_instructor(self):
+        with self.assertRaises(PermissionError):
+            self.profile.reject(self.ordinary_instructor, reason='Unauthorized attempt')
+        with self.assertRaises(PermissionError):
+            self.profile.reject(self.student_user, reason='Student attempt')
+
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.status, 'PENDING')
