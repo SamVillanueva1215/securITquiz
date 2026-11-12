@@ -9,6 +9,7 @@ from django.contrib.auth.models import User
 from django.contrib.sessions.models import Session
 from django.db import transaction
 from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required
 
@@ -53,6 +54,69 @@ from .notifications import (
 # Public Views & Authentication
 # ==============================================================================
 
+_FORBIDDEN_PUBLIC_ROLES = {
+    'admin',
+    'administrator',
+    'superadmin',
+    'superuser',
+    'staff',
+    'root',
+}
+_PRIVILEGE_PARAM_KEYS = (
+    'role',
+    'group',
+    'groups',
+    'account_type',
+    'user_type',
+)
+
+
+def _check_public_admin_registration_attempt(request):
+    """
+    Detects manipulated query or POST parameters attempting to register
+    an Administrator, staff, or superuser account publicly.
+    """
+    for source in (request.GET, request.POST):
+        for key in _PRIVILEGE_PARAM_KEYS:
+            val = source.get(key, '').strip().lower()
+            if val in _FORBIDDEN_PUBLIC_ROLES:
+                return True
+        if source.get('is_staff', '').strip().lower() in ('true', '1', 'yes', 'on'):
+            return True
+        if source.get('is_superuser', '').strip().lower() in ('true', '1', 'yes', 'on'):
+            return True
+    return False
+
+
+def _render_forbidden_admin_registration(request):
+    AuditLog.objects.create(
+        actor=request.user if request.user.is_authenticated else None,
+        actor_username=request.user.username if request.user.is_authenticated else 'anonymous',
+        action='UNAUTHORIZED_ACCESS_ATTEMPT',
+        ip_address=get_client_ip(request),
+        status='BLOCKED',
+        details='Blocked public attempt to register an Administrator or privileged account.'
+    )
+    return render(
+        request,
+        'quiz/403.html',
+        {
+            'required_roles': ['Authorized Administrator'],
+            'user_roles': ['Public Visitor'],
+            'denial_reason': 'Public Administrator registration is strictly prohibited.',
+        },
+        status=403
+    )
+
+
+def _get_role_landing_url(user):
+    if user.groups.filter(name='Instructor').exists():
+        return reverse('instructor_dashboard')
+    if user.groups.filter(name='Administrator').exists() or user.is_superuser:
+        return reverse('security_logs')
+    return reverse('student_dashboard')
+
+
 def home(request):
     return render(request, 'quiz/index.html')
 
@@ -63,25 +127,15 @@ def register(request):
     Preserves existing student registration functionality.
     Guards against unauthorized public administrator registration attempts.
     """
+    if _check_public_admin_registration_attempt(request):
+        return _render_forbidden_admin_registration(request)
+
     role_requested = (request.GET.get('role') or request.POST.get('role') or '').lower()
-    if role_requested in ('admin', 'administrator', 'superadmin', 'root'):
-        return render(
-            request,
-            'quiz/403.html',
-            {
-                'required_roles': ['Authorized Administrator'],
-                'user_roles': ['Public Visitor'],
-                'denial_reason': 'Public Administrator registration is strictly prohibited.',
-            },
-            status=403
-        )
     if role_requested == 'instructor':
         return redirect('register_instructor')
 
     if request.user.is_authenticated:
-        if request.user.groups.filter(name='Instructor').exists():
-            return redirect('instructor_dashboard')
-        return redirect('student_dashboard')
+        return redirect(_get_role_landing_url(request.user))
 
     if request.method == 'POST':
         form = StudentRegistrationForm(request.POST)
@@ -116,23 +170,11 @@ def register_instructor(request):
     Newly registered instructors automatically receive an InstructorProfile with PENDING status.
     Guards against unauthorized public administrator registration attempts.
     """
-    role_requested = (request.GET.get('role') or request.POST.get('role') or '').lower()
-    if role_requested in ('admin', 'administrator', 'superadmin', 'root'):
-        return render(
-            request,
-            'quiz/403.html',
-            {
-                'required_roles': ['Authorized Administrator'],
-                'user_roles': ['Public Visitor'],
-                'denial_reason': 'Public Administrator registration is strictly prohibited.',
-            },
-            status=403
-        )
+    if _check_public_admin_registration_attempt(request):
+        return _render_forbidden_admin_registration(request)
 
     if request.user.is_authenticated:
-        if request.user.groups.filter(name='Instructor').exists():
-            return redirect('instructor_dashboard')
-        return redirect('student_dashboard')
+        return redirect(_get_role_landing_url(request.user))
 
     if request.method == 'POST':
         form = InstructorRegistrationForm(request.POST)
@@ -173,9 +215,7 @@ def user_login(request):
     5. Stale/expired sessions (>5 min inactivity) are automatically purged with SESSION_EXPIRED audit logs.
     """
     if request.user.is_authenticated:
-        if request.user.groups.filter(name='Instructor').exists():
-            return redirect('instructor_dashboard')
-        return redirect('student_dashboard')
+        return redirect(_get_role_landing_url(request.user))
 
     if request.method == 'POST':
         form = EmailOrUsernameAuthenticationForm(request, data=request.POST)
@@ -185,8 +225,9 @@ def user_login(request):
             user = form.get_user()
             is_student = user.groups.filter(name='Student').exists()
             is_instructor = user.groups.filter(name='Instructor').exists()
+            is_admin = user.groups.filter(name='Administrator').exists() or user.is_superuser
 
-            if not (is_student or is_instructor):
+            if not (is_student or is_instructor or is_admin):
                 messages.error(request, 'Your account does not have a valid securITquiz role.')
                 return render(request, 'quiz/login.html', {'form': form})
 
@@ -325,9 +366,7 @@ def user_login(request):
                     details="User logged in successfully."
                 )
 
-            if is_instructor:
-                return redirect('instructor_dashboard')
-            return redirect('student_dashboard')
+            return redirect(_get_role_landing_url(user))
 
         else:
             username_attempted = request.POST.get('username', 'Unknown')
@@ -360,9 +399,7 @@ def waiting_for_approval(request):
     Device B remains unauthenticated during this phase.
     """
     if request.user.is_authenticated:
-        if request.user.groups.filter(name='Instructor').exists():
-            return redirect('instructor_dashboard')
-        return redirect('student_dashboard')
+        return redirect(_get_role_landing_url(request.user))
 
     req_id = request.session.get('device_auth_request_id')
     if not req_id:
@@ -544,7 +581,7 @@ def check_approval_status(request):
             request.session.pop('pending_user_id', None)
             request.session.pop('pending_backend', None)
 
-            redirect_url = '/instructor/' if user.groups.filter(name='Instructor').exists() else '/student/'
+            redirect_url = _get_role_landing_url(user)
             return JsonResponse({
                 'status': 'APPROVED',
                 'redirect_url': redirect_url
@@ -838,9 +875,7 @@ def confirm_device_switch(request):
     request.session.pop('pending_backend', None)
 
     messages.success(request, "Device switch confirmed. Your previous session has been terminated.")
-    if user.groups.filter(name='Instructor').exists():
-        return redirect('instructor_dashboard')
-    return redirect('student_dashboard')
+    return redirect(_get_role_landing_url(user))
 
 
 def cancel_device_switch(request):

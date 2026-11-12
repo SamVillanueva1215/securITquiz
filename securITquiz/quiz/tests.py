@@ -2542,3 +2542,362 @@ class InstructorApprovalFoundationTests(TestCase):
 
         self.profile.refresh_from_db()
         self.assertEqual(self.profile.status, 'PENDING')
+
+
+class AdminBootstrapTests(TestCase):
+    """
+    Phase 2B Tests: Secure Administrator Bootstrap via `create_admin` management command.
+    Verifies group creation, least-privilege flags, getpass usage, password validation,
+    duplicate/conflict protection, audit logging, atomic rollback, and login routing.
+    """
+    def setUp(self):
+        self.client = Client()
+
+    def test_successful_admin_creation_via_prompts(self):
+        """Bootstraps initial Administrator, auto-creates Administrator group, hashes with Argon2, and logs audit event."""
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command
+
+        secret_pw = 'V3ryStr0ng!AdminPass#2026'
+        out = StringIO()
+        err = StringIO()
+
+        with patch('builtins.input', side_effect=['sys_admin', 'sysadmin@university.edu']), \
+             patch('getpass.getpass', side_effect=[secret_pw, secret_pw]):
+            call_command('create_admin', stdout=out, stderr=err)
+
+        stdout_text = out.getvalue()
+        stderr_text = err.getvalue()
+
+        # Verify user created with expected least-privilege flags
+        admin_user = User.objects.get(username='sys_admin')
+        self.assertEqual(admin_user.email, 'sysadmin@university.edu')
+        self.assertTrue(admin_user.is_staff)
+        self.assertFalse(admin_user.is_superuser)
+        self.assertTrue(admin_user.is_active)
+        self.assertTrue(admin_user.password.startswith('argon2'))
+        self.assertTrue(admin_user.check_password(secret_pw))
+
+        # Verify Administrator group created and assigned exclusively
+        self.assertTrue(Group.objects.filter(name='Administrator').exists())
+        self.assertTrue(admin_user.groups.filter(name='Administrator').exists())
+        self.assertFalse(admin_user.groups.filter(name='Instructor').exists())
+        self.assertFalse(admin_user.groups.filter(name='Student').exists())
+
+        # Verify scoped Django Admin permissions assigned to Administrator group
+        admin_group = Group.objects.get(name='Administrator')
+        perm_codenames = set(admin_group.permissions.values_list('codename', flat=True))
+        self.assertIn('view_instructorprofile', perm_codenames)
+        self.assertIn('change_instructorprofile', perm_codenames)
+        self.assertIn('view_auditlog', perm_codenames)
+
+        # Verify password is NEVER printed in command output
+        self.assertNotIn(secret_pw, stdout_text)
+        self.assertNotIn(secret_pw, stderr_text)
+        self.assertIn('Successfully created initial Administrator', stdout_text)
+
+        # Verify ADMIN_CREATED audit log exists and contains no credentials
+        log = AuditLog.objects.filter(actor=admin_user, action='ADMIN_CREATED').first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.status, 'SUCCESS')
+        self.assertNotIn(secret_pw, log.details)
+        self.assertNotIn(admin_user.password, log.details)
+
+        # Verify bootstrapped Administrator can log in via /login/ and view security logs
+        res = self.client.post(reverse('login'), {
+            'username': 'sys_admin',
+            'password': secret_pw,
+        })
+        self.assertRedirects(res, reverse('security_logs'))
+
+    def test_password_confirmation_mismatch_rejected(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+
+        with patch('builtins.input', side_effect=['sys_admin', 'sysadmin@university.edu']), \
+             patch('getpass.getpass', side_effect=['StrongPass!2026', 'DifferentPass!2026']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('do not match', str(ctx.exception))
+        self.assertFalse(User.objects.filter(username='sys_admin').exists())
+        self.assertFalse(AuditLog.objects.filter(action='ADMIN_CREATED').exists())
+
+    def test_invalid_password_rejected_by_validators(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+
+        with patch('builtins.input', side_effect=['sys_admin', 'sysadmin@university.edu']), \
+             patch('getpass.getpass', side_effect=['1234', '1234']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('Password validation failed', str(ctx.exception))
+        self.assertNotIn('1234', str(ctx.exception))
+        self.assertFalse(User.objects.filter(username='sys_admin').exists())
+
+    def test_duplicate_username_rejected(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+
+        User.objects.create_user(username='existing_user', email='other@uni.edu', password='Pass')
+
+        with patch('builtins.input', side_effect=['EXISTING_USER', 'new@uni.edu']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('already exists', str(ctx.exception))
+
+    def test_duplicate_email_rejected(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+
+        User.objects.create_user(username='existing_user', email='dup@university.edu', password='Pass')
+
+        with patch('builtins.input', side_effect=['new_admin', 'DUP@university.edu']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('already exists', str(ctx.exception))
+        self.assertFalse(User.objects.filter(username='new_admin').exists())
+
+    def test_invalid_email_format_rejected(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+
+        with patch('builtins.input', side_effect=['new_admin', 'not-an-email']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('Invalid email', str(ctx.exception))
+        self.assertFalse(User.objects.filter(username='new_admin').exists())
+
+    def test_prevents_duplicate_initial_administrator(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+
+        admin_group, _ = Group.objects.get_or_create(name='Administrator')
+        first_admin = User.objects.create_user(username='first_admin', email='first@uni.edu', password='Pass')
+        first_admin.groups.add(admin_group)
+
+        with patch('builtins.input', side_effect=['second_admin', 'second@uni.edu']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('already exists', str(ctx.exception))
+        self.assertFalse(User.objects.filter(username='second_admin').exists())
+
+    def test_failed_creation_rolls_back_atomically(self):
+        """If audit logging fails inside transaction, no partial User or Group membership persists."""
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command
+
+        with patch('builtins.input', side_effect=['atomic_admin', 'atomic@uni.edu']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']), \
+             patch('quiz.management.commands.create_admin.AuditLog.objects.create', side_effect=RuntimeError('DB failure')):
+            with self.assertRaises(RuntimeError):
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertFalse(User.objects.filter(username='atomic_admin').exists())
+        self.assertFalse(Group.objects.filter(name='Administrator').exists())
+
+    def test_missing_required_permission_raises_command_error_and_rolls_back(self):
+        """If any permission in ADMIN_SCOPED_PERMISSIONS is missing, raise CommandError and roll back."""
+        from io import StringIO
+        from unittest.mock import patch
+        from django.contrib.auth.models import Permission
+        from django.core.management import call_command, CommandError
+
+        Permission.objects.filter(
+            content_type__app_label='quiz',
+            codename='change_instructorprofile'
+        ).delete()
+
+        with patch('builtins.input', side_effect=['perm_admin', 'permadmin@uni.edu']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('quiz.change_instructorprofile', str(ctx.exception))
+        self.assertFalse(User.objects.filter(username='perm_admin').exists())
+        self.assertFalse(Group.objects.filter(name='Administrator').exists())
+        self.assertFalse(AuditLog.objects.filter(action='ADMIN_CREATED').exists())
+
+    def test_refuses_bootstrap_if_active_superuser_exists_without_admin_group(self):
+        """Existing active superuser outside Administrator group blocks bootstrap without being modified."""
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+
+        legacy_super = User.objects.create_superuser(
+            username='legacy_root',
+            email='root@uni.edu',
+            password='V3ryStr0ng!Root2026'
+        )
+        original_password_hash = legacy_super.password
+
+        with patch('builtins.input', side_effect=['new_admin', 'newadmin@uni.edu']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('manual review', str(ctx.exception).lower())
+        self.assertFalse(User.objects.filter(username='new_admin').exists())
+        self.assertFalse(Group.objects.filter(name='Administrator').exists())
+
+        # Existing superuser must remain completely unmodified
+        legacy_super.refresh_from_db()
+        self.assertEqual(legacy_super.password, original_password_hash)
+        self.assertTrue(legacy_super.is_superuser)
+        self.assertFalse(legacy_super.groups.filter(name='Administrator').exists())
+
+    def test_concurrent_bootstrap_protection_acquires_postgres_advisory_lock_and_rechecks(self):
+        """Verifies pg_advisory_xact_lock is requested on PostgreSQL and concurrent TOCTOU creation is blocked."""
+        from io import StringIO
+        from unittest.mock import MagicMock, patch
+        from django.core.management import call_command, CommandError
+        from quiz.management.commands.create_admin import Command as CreateAdminCommand
+
+        # 1. Verify PostgreSQL advisory lock path is executed when vendor == 'postgresql'
+        mock_cursor = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_cursor
+        mock_cm.__exit__.return_value = False
+
+        cmd = CreateAdminCommand()
+        with patch('quiz.management.commands.create_admin.connection') as mock_conn:
+            mock_conn.vendor = 'postgresql'
+            mock_conn.cursor.return_value = mock_cm
+            mock_conn.features.has_select_for_update = False
+            cmd._acquire_bootstrap_lock()
+
+        mock_cursor.execute.assert_called_once()
+        sql_arg = mock_cursor.execute.call_args[0][0]
+        self.assertIn('pg_advisory_xact_lock', sql_arg)
+
+        # 2. Simulate concurrent process creating an Administrator right before atomic lock check
+        def simulate_race_during_lock():
+            admin_group, _ = Group.objects.get_or_create(name='Administrator')
+            racer = User.objects.create_user(
+                username='racer_admin', email='racer@uni.edu', password='Pass'
+            )
+            racer.groups.add(admin_group)
+
+        with patch('builtins.input', side_effect=['second_racer', 'secondracer@uni.edu']), \
+             patch('getpass.getpass', side_effect=['V3ryStr0ng!Pass2026', 'V3ryStr0ng!Pass2026']), \
+             patch.object(CreateAdminCommand, '_acquire_bootstrap_lock', side_effect=simulate_race_during_lock):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('already exists', str(ctx.exception))
+        self.assertFalse(User.objects.filter(username='second_racer').exists())
+
+    def test_refuses_echoed_password_when_getpass_warns_or_stdin_not_tty(self):
+        """Aborts cleanly if terminal echo cannot be suppressed or stdin is non-interactive."""
+        import getpass
+        import warnings
+        from io import StringIO
+        from unittest.mock import MagicMock, patch
+        from django.core.management import call_command, CommandError
+
+        # Case 1: getpass emits GetPassWarning (fallback_getpass echo condition)
+        def warn_getpass(prompt='Password: '):
+            warnings.warn("Can not control echo on the terminal.", getpass.GetPassWarning)
+            return 'V3ryStr0ng!Pass2026'
+
+        with patch('builtins.input', side_effect=['echo_admin', 'echoadmin@uni.edu']), \
+             patch('getpass.getpass', side_effect=warn_getpass):
+            with self.assertRaises(CommandError) as ctx:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('echo', str(ctx.exception).lower())
+        self.assertFalse(User.objects.filter(username='echo_admin').exists())
+
+        # Case 2: getpass points directly to fallback_getpass
+        with patch('builtins.input', side_effect=['echo_admin2', 'echoadmin2@uni.edu']), \
+             patch('getpass.getpass', getpass.fallback_getpass):
+            with self.assertRaises(CommandError) as ctx2:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('echo', str(ctx2.exception).lower())
+        self.assertFalse(User.objects.filter(username='echo_admin2').exists())
+
+        # Case 3: Real getpass module function with non-TTY stdin
+        fake_stdin = MagicMock()
+        fake_stdin.isatty.return_value = False
+        real_like_getpass = MagicMock(__module__='getpass')
+        with patch('builtins.input', side_effect=['nontty_admin', 'nontty@uni.edu']), \
+             patch('getpass.getpass', real_like_getpass), \
+             patch('sys.stdin', fake_stdin):
+            with self.assertRaises(CommandError) as ctx3:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('interactive terminal', str(ctx3.exception).lower())
+        self.assertFalse(User.objects.filter(username='nontty_admin').exists())
+
+        # Case 4: Unsupported / aborted terminal input (EOFError)
+        with patch('builtins.input', side_effect=['eof_admin', 'eof@uni.edu']), \
+             patch('getpass.getpass', side_effect=EOFError()):
+            with self.assertRaises(CommandError) as ctx4:
+                call_command('create_admin', stdout=StringIO(), stderr=StringIO())
+
+        self.assertIn('aborted', str(ctx4.exception).lower())
+        self.assertFalse(User.objects.filter(username='eof_admin').exists())
+
+
+class PublicAdminRegistrationProtectionTests(TestCase):
+    """
+    Phase 2B Tests: Ensures manipulated POST requests cannot register Administrators
+    while preserving Student and pending Instructor registration.
+    """
+    def setUp(self):
+        self.client = Client()
+
+    def test_manipulated_post_to_student_register_blocks_admin_fields(self):
+        payloads = [
+            {'role': 'Administrator'},
+            {'group': 'Administrator'},
+            {'groups': 'Administrator'},
+            {'account_type': 'admin'},
+            {'is_superuser': 'true'},
+            {'is_staff': 'true'},
+        ]
+        for extra in payloads:
+            data = {
+                'full_name': 'Malicious Actor',
+                'student_id': 'STU-HACK',
+                'email': 'hacker@uni.edu',
+                'username': 'hacker_admin',
+                'password1': 'V3ryStr0ng!Pass2026',
+                'password2': 'V3ryStr0ng!Pass2026',
+            }
+            data.update(extra)
+            res = self.client.post(reverse('register'), data)
+            self.assertEqual(res.status_code, 403)
+            self.assertFalse(User.objects.filter(username='hacker_admin').exists())
+
+    def test_manipulated_post_to_instructor_register_blocks_admin_fields(self):
+        res = self.client.post(reverse('register_instructor'), {
+            'full_name': 'Malicious Instructor',
+            'department': 'Security',
+            'email': 'hacker2@uni.edu',
+            'username': 'hacker_inst',
+            'password1': 'V3ryStr0ng!Pass2026',
+            'password2': 'V3ryStr0ng!Pass2026',
+            'role': 'administrator',
+            'is_superuser': 'on',
+        })
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(User.objects.filter(username='hacker_inst').exists())

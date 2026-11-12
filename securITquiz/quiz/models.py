@@ -385,6 +385,8 @@ class AuditLog(models.Model):
         ('INSTRUCTOR_REGISTERED', 'Instructor Registered (Pending Approval)'),
         ('INSTRUCTOR_APPROVED', 'Instructor Approved'),
         ('INSTRUCTOR_REJECTED', 'Instructor Registration Rejected'),
+        # Administrator Bootstrap & Governance
+        ('ADMIN_CREATED', 'Administrator Account Created'),
     )
 
     actor = models.ForeignKey(
