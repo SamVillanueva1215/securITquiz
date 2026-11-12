@@ -32,6 +32,7 @@ urlpatterns = [
     path('student/profile/', views.student_profile, name='student_profile'),
     path('student/quiz/<int:quiz_id>/verify-pin/', views.verify_quiz_pin, name='verify_quiz_pin'),
     path('student/quiz/<int:quiz_id>/take/', views.take_quiz, name='take_quiz'),
+    path('student/quiz/<int:quiz_id>/autosave/', views.save_quiz_progress, name='save_quiz_progress'),
     path('student/quiz/result/<int:submission_id>/', views.quiz_result, name='quiz_result'),
 
     # Instructor Workflow & Quiz Management

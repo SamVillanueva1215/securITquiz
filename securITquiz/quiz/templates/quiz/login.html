@@ -24,6 +24,9 @@
 
     <form method="POST">
         {% csrf_token %}
+        {% if next %}
+            <input type="hidden" name="next" value="{{ next }}">
+        {% endif %}
 
         {% for field in form %}
             <div style="margin-bottom: 20px;">

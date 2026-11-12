@@ -35,9 +35,15 @@
             </div>
         </div>
 
-        <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: #666;">
+        <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: #666; align-items: center;">
             <div><strong style="color: #003366;">Sequential Navigation:</strong> Once moving forward, previously answered questions lock.</div>
             <div><strong style="color: #003366;">Deadline:</strong> {{ quiz.deadline|date:"M d, Y h:i A" }}</div>
+            <div id="autosave-status" style="margin-left: auto; font-weight: bold; color: #27ae60;"></div>
+        </div>
+        <div id="session-expired-banner" role="alert" style="display: none; margin-top: 12px; padding: 12px 16px; border-radius: 6px; background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; font-size: 14px;">
+            <strong id="session-expired-title">Session Expired</strong>:
+            <span id="session-expired-message"></span>
+            <a id="session-expired-login-link" href="{% url 'login' %}" style="display: inline-block; margin-left: 10px; font-weight: bold; color: #003366; text-decoration: underline;">Log in to continue</a>
         </div>
     </div>
 
@@ -111,6 +117,7 @@
                            id="id_question_{{ question.id }}"
                            name="question_{{ question.id }}"
                            value="{{ saved_answer }}"
+                           maxlength="200"
                            {% if is_locked %}disabled{% endif %}
                            placeholder="Enter answer (case-insensitive)..."
                            autocomplete="off"
@@ -134,16 +141,56 @@
 <script>
     var remainingSeconds = {{ remaining_seconds }};
     var isSubmitting = false;
+    var sessionExpired = false;
+    var autosaveTimer = null;
+    var autosaveController = null;
 
     var timerDisplay = document.getElementById('timer-display');
     var timerBox = document.getElementById('timer-box');
     var quizForm = document.getElementById('take-quiz-form');
+    var autosaveStatus = document.getElementById('autosave-status');
+    var sessionExpiredBanner = document.getElementById('session-expired-banner');
+    var sessionExpiredMessage = document.getElementById('session-expired-message');
+    var sessionExpiredLoginLink = document.getElementById('session-expired-login-link');
+
+    function cancelPendingAutosaves() {
+        if (autosaveTimer) {
+            clearTimeout(autosaveTimer);
+            autosaveTimer = null;
+        }
+        if (autosaveController) {
+            autosaveController.abort();
+            autosaveController = null;
+        }
+    }
+
+    function showSessionExpiredWarning(message, loginUrl) {
+        sessionExpired = true;
+        cancelPendingAutosaves();
+        if (autosaveStatus) {
+            autosaveStatus.style.color = '#c0392b';
+            autosaveStatus.textContent = 'Session expired — auto-save paused';
+        }
+        if (sessionExpiredMessage) {
+            sessionExpiredMessage.textContent = message;
+        }
+        if (sessionExpiredLoginLink && loginUrl && loginUrl.charAt(0) === '/') {
+            sessionExpiredLoginLink.href = loginUrl;
+            sessionExpiredLoginLink.onclick = function() {
+                isSubmitting = true;
+            };
+        }
+        if (sessionExpiredBanner) {
+            sessionExpiredBanner.style.display = 'block';
+        }
+    }
 
     function updateTimer() {
         if (remainingSeconds <= 0) {
             timerDisplay.textContent = "00:00";
             timerBox.style.background = "#c0392b";
             isSubmitting = true;
+            cancelPendingAutosaves();
             alert("Examination time has expired! Your answers are being automatically submitted.");
 
             var submitInput = document.createElement('input');
@@ -176,6 +223,108 @@
 
     quizForm.addEventListener('submit', function() {
         isSubmitting = true;
+        cancelPendingAutosaves();
+    });
+
+    // Event-driven answer auto-save on genuine student input (no idle background polling)
+    function triggerAutosave() {
+        if (isSubmitting || sessionExpired) return;
+        if (autosaveController) {
+            autosaveController.abort();
+            autosaveController = null;
+        }
+        if (autosaveStatus) {
+            autosaveStatus.style.color = '#7f8c8d';
+            autosaveStatus.textContent = 'Saving draft...';
+        }
+        var formData = new FormData(quizForm);
+        autosaveController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var currentController = autosaveController;
+
+        fetch("{% url 'save_quiz_progress' quiz.id %}", {
+            method: 'POST',
+            body: formData,
+            redirect: 'manual',
+            signal: currentController ? currentController.signal : undefined,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json'
+            }
+        })
+        .then(function(res) {
+            if (autosaveController === currentController) {
+                autosaveController = null;
+            }
+            if (isSubmitting) return;
+
+            if (res.type === 'opaqueredirect' || res.status === 0) {
+                showSessionExpiredWarning(
+                    'Your session expired or was redirected to login. Recent unsaved changes may not be saved; please copy any recent answers and log in again.',
+                    "{% url 'login' %}"
+                );
+                return;
+            }
+
+            var contentType = res.headers.get('content-type') || '';
+            if (contentType.indexOf('application/json') === -1) {
+                if (autosaveStatus) {
+                    autosaveStatus.style.color = '#c0392b';
+                    autosaveStatus.textContent = 'Unexpected server response — draft may not be saved.';
+                }
+                return;
+            }
+
+            return res.json().then(function(data) {
+                if (isSubmitting) return;
+
+                if (res.status === 401 || (data && (data.status === 'session_expired' || data.status === 'session_revoked'))) {
+                    var fallbackMsg = (data && data.preserved)
+                        ? 'Your session expired, and your latest answers were preserved. Please log in again and verify the quiz PIN to resume.'
+                        : 'Your session expired and latest changes could not be saved. Please copy recent answers and log in again.';
+                    showSessionExpiredWarning((data && data.message) || fallbackMsg, (data && data.login_url) || "{% url 'login' %}");
+                    return;
+                }
+
+                if (!res.ok) {
+                    if (autosaveStatus) {
+                        autosaveStatus.style.color = '#c0392b';
+                        autosaveStatus.textContent = (data && data.message) ? data.message : 'Failed to save draft answers.';
+                    }
+                    return;
+                }
+
+                if (autosaveStatus && data && data.status === 'saved') {
+                    autosaveStatus.style.color = '#27ae60';
+                    autosaveStatus.textContent = 'Draft answers saved';
+                }
+            });
+        })
+        .catch(function(err) {
+            if (autosaveController === currentController) {
+                autosaveController = null;
+            }
+            if ((err && err.name === 'AbortError') || isSubmitting || sessionExpired) {
+                return;
+            }
+            if (autosaveStatus) {
+                autosaveStatus.style.color = '#c0392b';
+                autosaveStatus.textContent = 'Network error: draft answers could not be saved. Check your connection.';
+            }
+        });
+    }
+
+    quizForm.addEventListener('change', function() {
+        if (isSubmitting || sessionExpired) return;
+        if (autosaveTimer) clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(triggerAutosave, 300);
+    });
+
+    quizForm.addEventListener('input', function(e) {
+        if (isSubmitting || sessionExpired) return;
+        if (e.target && e.target.type === 'text') {
+            if (autosaveTimer) clearTimeout(autosaveTimer);
+            autosaveTimer = setTimeout(triggerAutosave, 1200);
+        }
     });
 
     // Leaving Page Warning (Part 4.3)

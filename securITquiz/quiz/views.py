@@ -7,10 +7,12 @@ from django.contrib import messages
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.models import User
 from django.contrib.sessions.models import Session
-from django.db import transaction
-from django.http import HttpResponse, JsonResponse
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, connection, transaction
+from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.contrib.auth.decorators import login_required
 
 from .models import (
@@ -36,7 +38,13 @@ from .forms import (
 )
 from .decorators import student_required, instructor_required, admin_required
 from .crypto import generate_dsa_signature, verify_dsa_signature
-from .middleware import get_client_ip, cleanup_expired_sessions, get_or_create_device_id
+from .middleware import (
+    get_client_ip,
+    cleanup_expired_sessions,
+    get_or_create_device_id,
+    is_student_session_enforced,
+    is_active_session_live,
+)
 from .notifications import (
     notify_student_submission_confirmation,
     notify_instructor_new_submission,
@@ -62,48 +70,61 @@ _FORBIDDEN_PUBLIC_ROLES = {
     'staff',
     'root',
 }
-_PRIVILEGE_PARAM_KEYS = (
+_ROLE_PARAM_KEYS = (
     'role',
     'group',
     'groups',
     'account_type',
     'user_type',
 )
+_FLAG_PARAM_KEYS = (
+    'is_staff',
+    'is_superuser',
+    'is_active',
+    'permissions',
+    'user_permissions',
+)
 
 
 def _check_public_admin_registration_attempt(request):
     """
-    Detects manipulated query or POST parameters attempting to register
-    an Administrator, staff, or superuser account publicly.
+    Detects manipulated query or POST parameters attempting to submit
+    privileged roles, group overrides, or staff/superuser/permission flags.
     """
-    for source in (request.GET, request.POST):
-        for key in _PRIVILEGE_PARAM_KEYS:
-            val = source.get(key, '').strip().lower()
-            if val in _FORBIDDEN_PUBLIC_ROLES:
+    if request.method == 'POST':
+        for key in _ROLE_PARAM_KEYS + _FLAG_PARAM_KEYS:
+            if key in request.POST:
                 return True
-        if source.get('is_staff', '').strip().lower() in ('true', '1', 'yes', 'on'):
+
+    for key in _ROLE_PARAM_KEYS:
+        val = request.GET.get(key, '').strip().lower()
+        if val in _FORBIDDEN_PUBLIC_ROLES:
             return True
-        if source.get('is_superuser', '').strip().lower() in ('true', '1', 'yes', 'on'):
+    for key in _FLAG_PARAM_KEYS:
+        if key in request.GET:
             return True
     return False
 
 
-def _render_forbidden_admin_registration(request):
+def _render_forbidden_admin_registration(request, reason='Public Administrator registration is strictly prohibited.'):
     AuditLog.objects.create(
         actor=request.user if request.user.is_authenticated else None,
         actor_username=request.user.username if request.user.is_authenticated else 'anonymous',
         action='UNAUTHORIZED_ACCESS_ATTEMPT',
         ip_address=get_client_ip(request),
         status='BLOCKED',
-        details='Blocked public attempt to register an Administrator or privileged account.'
+        details=f"Blocked unauthorized registration attempt: {reason}"
     )
     return render(
         request,
         'quiz/403.html',
         {
-            'required_roles': ['Authorized Administrator'],
-            'user_roles': ['Public Visitor'],
-            'denial_reason': 'Public Administrator registration is strictly prohibited.',
+            'required_roles': ['Unauthenticated Public Visitor'],
+            'user_roles': (
+                list(request.user.groups.values_list('name', flat=True))
+                if request.user.is_authenticated else ['Public Visitor']
+            ),
+            'denial_reason': reason,
         },
         status=403
     )
@@ -117,6 +138,30 @@ def _get_role_landing_url(user):
     return reverse('student_dashboard')
 
 
+def _get_safe_redirect_target(request, user):
+    """
+    Returns a validated local redirect URL if `next` is trusted, or falls
+    back to the user's authoritative role landing URL. Prevents open redirects.
+    """
+    landing_url = _get_role_landing_url(user)
+
+    # Unapproved instructors always go to instructor_dashboard (denied 403)
+    if user.groups.filter(name='Instructor').exists():
+        profile = getattr(user, 'instructor_profile', None)
+        if not profile or not profile.is_authorized():
+            return reverse('instructor_dashboard')
+
+    next_url = (request.POST.get('next') or request.GET.get('next') or '').strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return next_url
+
+    return landing_url
+
+
 def home(request):
     return render(request, 'quiz/index.html')
 
@@ -125,17 +170,23 @@ def register(request):
     """
     Public student registration endpoint.
     Preserves existing student registration functionality.
-    Guards against unauthorized public administrator registration attempts.
+    Guards against unauthorized public administrator registration attempts
+    and blocks authenticated users from creating extra accounts or changing roles.
     """
     if _check_public_admin_registration_attempt(request):
         return _render_forbidden_admin_registration(request)
 
-    role_requested = (request.GET.get('role') or request.POST.get('role') or '').lower()
+    if request.user.is_authenticated:
+        if request.method == 'POST':
+            return _render_forbidden_admin_registration(
+                request,
+                reason='Authenticated users cannot register additional accounts or modify roles.'
+            )
+        return redirect(_get_role_landing_url(request.user))
+
+    role_requested = request.GET.get('role', '').strip().lower()
     if role_requested == 'instructor':
         return redirect('register_instructor')
-
-    if request.user.is_authenticated:
-        return redirect(_get_role_landing_url(request.user))
 
     if request.method == 'POST':
         form = StudentRegistrationForm(request.POST)
@@ -168,12 +219,18 @@ def register_instructor(request):
     """
     Public instructor registration endpoint.
     Newly registered instructors automatically receive an InstructorProfile with PENDING status.
-    Guards against unauthorized public administrator registration attempts.
+    Guards against unauthorized public administrator registration attempts
+    and blocks authenticated users from creating extra accounts or changing roles.
     """
     if _check_public_admin_registration_attempt(request):
         return _render_forbidden_admin_registration(request)
 
     if request.user.is_authenticated:
+        if request.method == 'POST':
+            return _render_forbidden_admin_registration(
+                request,
+                reason='Authenticated users cannot register additional accounts or modify roles.'
+            )
         return redirect(_get_role_landing_url(request.user))
 
     if request.method == 'POST':
@@ -204,18 +261,56 @@ def register_instructor(request):
     })
 
 
+def _reject_duplicate_student_login(request, form, user, ip, device_id):
+    """
+    Records security/audit events for a rejected duplicate Student login
+    without exposing passwords, hashes, or session keys, and re-renders login.
+    """
+    SecurityLog.objects.create(
+        username_attempted=user.username,
+        ip_address=ip,
+        is_success=False,
+        action='BLOCKED_CONCURRENT_LOGIN'
+    )
+    AuditLog.objects.create(
+        actor=user,
+        actor_username=user.username,
+        action='CONCURRENT_LOGIN_BLOCKED',
+        ip_address=ip,
+        device_id=device_id,
+        status='BLOCKED',
+        details=f"Rejected duplicate Student login from IP {ip} while an active session already exists."
+    )
+    notify_suspicious_security_event(
+        user=user,
+        ip_address=ip,
+        event_type="Blocked Duplicate Login Attempt",
+        details=(
+            f"A duplicate login attempt for your account was rejected from IP address {ip} "
+            "because an active session is already open."
+        )
+    )
+    err_msg = (
+        "This student account already has an active session on another device or browser. "
+        "Please log out from your existing session before logging in again."
+    )
+    form.add_error(None, err_msg)
+    messages.error(request, err_msg)
+    next_url = (request.POST.get('next') or request.GET.get('next') or '').strip()
+    return render(request, 'quiz/login.html', {'form': form, 'next': next_url})
+
+
 def user_login(request):
     """
-    Handles user authentication with Mutual Two-Device Authorization & Single Active Session Protection.
-    If an existing active session is detected on another device/browser:
-    1. The requesting device (Device B) enters 'Waiting for Approval' and remains unauthenticated.
-    2. The currently active session (Device A) receives an on-screen authorization prompt.
-    3. If approved within 1 minute (60s), Device B becomes active and Device A is terminated.
-    4. If denied or timed out, Device A remains active and Device B is rejected.
-    5. Stale/expired sessions (>5 min inactivity) are automatically purged with SESSION_EXPIRED audit logs.
+    Handles role-based authentication and Student-only Single-Active-Session Enforcement.
+    - Students with a live active session on another browser/device have second logins rejected;
+      the first session remains active and untouched.
+    - Stale, expired, deleted, or password-invalidated Student sessions are automatically cleaned up.
+    - Instructors and Administrators are permitted concurrent sessions across devices.
+    - Untrusted `next` redirects are rejected to prevent open redirects.
     """
     if request.user.is_authenticated:
-        return redirect(_get_role_landing_url(request.user))
+        return redirect(_get_safe_redirect_target(request, request.user))
 
     if request.method == 'POST':
         form = EmailOrUsernameAuthenticationForm(request, data=request.POST)
@@ -228,119 +323,69 @@ def user_login(request):
             is_admin = user.groups.filter(name='Administrator').exists() or user.is_superuser
 
             if not (is_student or is_instructor or is_admin):
-                messages.error(request, 'Your account does not have a valid securITquiz role.')
+                SecurityLog.objects.create(
+                    username_attempted=user.username,
+                    ip_address=ip,
+                    is_success=False,
+                    action='LOGIN_FAILED'
+                )
+                AuditLog.objects.create(
+                    actor=user,
+                    actor_username=user.username,
+                    action='UNAUTHORIZED_ACCESS_ATTEMPT',
+                    ip_address=ip,
+                    status='DENIED',
+                    details="Login blocked: account has no recognized securITquiz role."
+                )
+                err_msg = 'Your account does not have a valid securITquiz role.'
+                form.add_error(None, err_msg)
+                messages.error(request, err_msg)
                 return render(request, 'quiz/login.html', {'form': form})
 
-            # Clean up stale/expired sessions first (5-minute inactivity window)
-            cleanup_expired_sessions(user=user, ip_address=ip)
-
-            # Check for existing active session
-            active_session = ActiveSession.objects.filter(user=user).first()
-            current_session_key = request.session.session_key
-
             device_id = get_or_create_device_id(request)
+            enforce_single_session = is_student_session_enforced(user)
 
-            # If user has an active, unexpired session on another device/browser
-            if active_session and not active_session.is_expired(timeout_minutes=5):
-                if active_session.session_key != current_session_key:
-                    # Device B enters two-device mutual authorization workflow
+            if enforce_single_session:
+                # Lock User row where supported (PostgreSQL) to serialize concurrent logins
+                try:
+                    with transaction.atomic():
+                        if connection.features.has_select_for_update:
+                            User.objects.select_for_update().get(pk=user.pk)
+                            active_session = ActiveSession.objects.select_for_update().filter(user=user).first()
+                        else:
+                            active_session = ActiveSession.objects.filter(user=user).first()
+
+                        if active_session and is_active_session_live(user, active_session, ip_address=ip):
+                            if active_session.session_key != request.session.session_key:
+                                return _reject_duplicate_student_login(request, form, user, ip, device_id)
+
+                        # No live conflicting session: rotate/establish Django session & ActiveSession
+                        login(request, user)
+                        new_session_key = request.session.session_key
+                        if not new_session_key:
+                            request.session.save()
+                            new_session_key = request.session.session_key
+
+                        ActiveSession.objects.create(
+                            user=user,
+                            session_key=new_session_key,
+                            device_id=device_id,
+                            ip_address=ip,
+                            last_activity=timezone.now()
+                        )
+                except IntegrityError:
+                    # Defense-in-depth fallback (e.g. SQLite concurrent race on OneToOneField UNIQUE)
+                    if request.user.is_authenticated:
+                        logout(request)
+                    return _reject_duplicate_student_login(request, form, user, ip, device_id)
+            else:
+                # Instructors and Administrators are not restricted by Student single-session lock
+                with transaction.atomic():
+                    login(request, user)
                     if not request.session.session_key:
                         request.session.save()
 
-                    with transaction.atomic():
-                        # Expire prior pending requests for this user
-                        now = timezone.now()
-                        DeviceAuthorizationRequest.objects.filter(
-                            user=user,
-                            status='PENDING',
-                            expires_at__lte=now
-                        ).update(status='EXPIRED', resolved_at=now)
-
-                        # Create new 1-minute mutual authorization request
-                        auth_req = DeviceAuthorizationRequest.objects.create(
-                            user=user,
-                            requesting_session_key=request.session.session_key,
-                            requesting_device_id=device_id,
-                            authorized_device_id=active_session.device_id or '',
-                            requesting_ip=ip,
-                            requesting_user_agent=request.META.get('HTTP_USER_AGENT', '')[:255],
-                            status='PENDING',
-                            expires_at=now + datetime.timedelta(seconds=60)
-                        )
-
-                        # Track pending login state in Device B's session
-                        request.session['device_auth_request_id'] = auth_req.id
-                        request.session['pending_user_id'] = user.id
-                        request.session['pending_backend'] = user.backend
-
-                        # Security and Audit Logging
-                        SecurityLog.objects.create(
-                            username_attempted=user.username,
-                            ip_address=ip,
-                            is_success=False,
-                            action='BLOCKED_CONCURRENT_LOGIN'
-                        )
-                        AuditLog.objects.create(
-                            actor=user,
-                            actor_username=user.username,
-                            action='CONCURRENT_LOGIN_BLOCKED',
-                            ip_address=ip,
-                            device_id=device_id,
-                            status='BLOCKED',
-                            details=f"Concurrent login attempt detected from IP {ip}. Device authorization requested."
-                        )
-                        AuditLog.objects.create(
-                            actor=user,
-                            actor_username=user.username,
-                            action='DEVICE_AUTHORIZATION_REQUESTED',
-                            ip_address=ip,
-                            device_id=device_id,
-                            status='PENDING',
-                            details=f"Device authorization request #{auth_req.id} created from IP {ip}. Awaiting approval from active session within 60 seconds."
-                        )
-                        AuditLog.objects.create(
-                            actor=user,
-                            actor_username=user.username,
-                            action='DEVICE_AUTH_REQUESTED',
-                            ip_address=ip,
-                            device_id=device_id,
-                            status='PENDING',
-                            details=f"Device authorization request #{auth_req.id} created from IP {ip}."
-                        )
-
-                    # Trigger device authorization and suspicious activity email notifications
-                    notify_device_auth_requested(
-                        user=user,
-                        requesting_ip=ip,
-                        expires_at=auth_req.expires_at
-                    )
-                    notify_suspicious_security_event(
-                        user=user,
-                        ip_address=ip,
-                        event_type="Concurrent Login Attempt Detected",
-                        details=f"A login attempt was initiated from IP address {ip}. An authorization request was sent to your active session."
-                    )
-
-                    return redirect('waiting_for_approval')
-
-            # No active session conflict: log in user and establish ActiveSession
             with transaction.atomic():
-                login(request, user)
-                new_session_key = request.session.session_key
-                if not new_session_key:
-                    request.session.save()
-                    new_session_key = request.session.session_key
-
-                ActiveSession.objects.update_or_create(
-                    user=user,
-                    defaults={
-                        'session_key': new_session_key,
-                        'device_id': device_id,
-                        'ip_address': ip,
-                        'last_activity': timezone.now()
-                    }
-                )
-
                 SecurityLog.objects.create(
                     username_attempted=user.username,
                     ip_address=ip,
@@ -354,7 +399,7 @@ def user_login(request):
                     ip_address=ip,
                     device_id=device_id,
                     status='CREATED',
-                    details="New active session created."
+                    details="New authenticated session created."
                 )
                 AuditLog.objects.create(
                     actor=user,
@@ -366,7 +411,7 @@ def user_login(request):
                     details="User logged in successfully."
                 )
 
-            return redirect(_get_role_landing_url(user))
+            return redirect(_get_safe_redirect_target(request, user))
 
         else:
             username_attempted = request.POST.get('username', 'Unknown')
@@ -389,7 +434,8 @@ def user_login(request):
         form = EmailOrUsernameAuthenticationForm()
 
     return render(request, 'quiz/login.html', {
-        'form': form
+        'form': form,
+        'next': request.GET.get('next', ''),
     })
 
 
@@ -509,8 +555,19 @@ def check_approval_status(request):
             })
 
         elif auth_req.status == 'APPROVED':
-            # Complete login on Device B
+            # Enforce Student single-active-session restriction: never allow promotion over live Student session
             user = auth_req.user
+            if is_student_session_enforced(user):
+                old_active = ActiveSession.objects.filter(user=user).first()
+                if old_active and is_active_session_live(user, old_active, ip_address=get_client_ip(request)):
+                    request.session.pop('device_auth_request_id', None)
+                    request.session.pop('pending_user_id', None)
+                    request.session.pop('pending_backend', None)
+                    return JsonResponse({
+                        'status': 'DENIED',
+                        'message': 'Student account already has an active session.'
+                    }, status=403)
+
             backend = request.session.get('pending_backend')
             user.backend = backend
             device_id = auth_req.requesting_device_id or get_or_create_device_id(request)
@@ -815,67 +872,28 @@ def respond_device_request(request):
 
 def confirm_device_switch(request):
     """
-    Handles confirmed device switch: invalidates old session, establishes new session.
+    Device switching is disabled for Student accounts under Phase 2C single-active-session enforcement.
     """
     if request.method != 'POST':
         return redirect('login')
 
     user_id = request.session.get('pending_switch_user_id') or request.session.get('pending_user_id')
-    backend = request.session.get('pending_switch_backend') or request.session.get('pending_backend')
+    if user_id:
+        user = User.objects.filter(id=user_id).first()
+        if user and is_student_session_enforced(user):
+            request.session.pop('pending_switch_user_id', None)
+            request.session.pop('pending_switch_backend', None)
+            request.session.pop('pending_user_id', None)
+            request.session.pop('pending_backend', None)
+            messages.error(
+                request,
+                "Device switching is disabled for student accounts. "
+                "Please log out from your existing session before logging in again."
+            )
+            return redirect('login')
 
-    if not user_id:
-        messages.error(request, "No pending login session found. Please log in again.")
-        return redirect('login')
-
-    user = get_object_or_404(User, id=user_id)
-    ip = get_client_ip(request)
-
-    with transaction.atomic():
-        # Invalidate old session in Django session database
-        old_active = ActiveSession.objects.filter(user=user).first()
-        if old_active:
-            Session.objects.filter(session_key=old_active.session_key).delete()
-
-        # Authorize new session
-        user.backend = backend
-        login(request, user)
-        new_key = request.session.session_key
-        if not new_key:
-            request.session.save()
-            new_key = request.session.session_key
-
-        ActiveSession.objects.update_or_create(
-            user=user,
-            defaults={
-                'session_key': new_key,
-                'ip_address': ip,
-                'last_activity': timezone.now()
-            }
-        )
-
-        SecurityLog.objects.create(
-            username_attempted=user.username,
-            ip_address=ip,
-            is_success=True,
-            action='DEVICE_SWITCH_CONFIRMED'
-        )
-        AuditLog.objects.create(
-            actor=user,
-            actor_username=user.username,
-            action='DEVICE_SWITCH_CONFIRMED',
-            ip_address=ip,
-            status='CONFIRMED',
-            details=f"Device switch confirmed from IP {ip}. Previous session was invalidated."
-        )
-
-    # Clean up pending state
-    request.session.pop('pending_switch_user_id', None)
-    request.session.pop('pending_switch_backend', None)
-    request.session.pop('pending_user_id', None)
-    request.session.pop('pending_backend', None)
-
-    messages.success(request, "Device switch confirmed. Your previous session has been terminated.")
-    return redirect(_get_role_landing_url(user))
+    messages.error(request, "No pending login session found. Please log in again.")
+    return redirect('login')
 
 
 def cancel_device_switch(request):
@@ -911,10 +929,25 @@ def cancel_device_switch(request):
 
 
 def user_logout(request):
+    """
+    Secure POST-only, CSRF-protected logout endpoint.
+    GET requests do not mutate authentication or session state.
+    Releases ActiveSession only when session_key matches the current session.
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
     if request.user.is_authenticated:
         ip = get_client_ip(request)
         device_id = get_or_create_device_id(request)
-        ActiveSession.objects.filter(user=request.user).delete()
+        current_session_key = request.session.session_key
+
+        if current_session_key:
+            ActiveSession.objects.filter(
+                user=request.user,
+                session_key=current_session_key
+            ).delete()
+
         SecurityLog.objects.create(
             username_attempted=request.user.username,
             ip_address=ip,
@@ -928,7 +961,7 @@ def user_logout(request):
             ip_address=ip,
             device_id=device_id,
             status='SUCCESS',
-            details="User logged out cleanly and active session terminated."
+            details="User logged out cleanly and matching session terminated."
         )
         AuditLog.objects.create(
             actor=request.user,
@@ -1141,7 +1174,63 @@ def take_quiz(request, quiz_id):
             return redirect('verify_quiz_pin', quiz_id=quiz.id)
         request.session[rendered_key] = True
 
-    # 4. Fetch or create active attempt
+    # 4-6. Handle POST atomically under row lock so autosaves cannot race finalization
+    if request.method == 'POST':
+        with transaction.atomic():
+            existing_submission = QuizSubmission.objects.filter(
+                student=request.user,
+                quiz=quiz
+            ).first()
+            if existing_submission:
+                messages.warning(request, f"You have already submitted '{quiz.title}'.")
+                return redirect('quiz_result', submission_id=existing_submission.id)
+
+            attempt = QuizAttempt.objects.select_for_update().filter(
+                student=request.user,
+                quiz=quiz,
+            ).first()
+
+            if attempt and attempt.is_completed:
+                messages.warning(request, f"You have already submitted '{quiz.title}'.")
+                return redirect('student_dashboard')
+
+            if not attempt:
+                qids = list(quiz.questions.values_list('id', flat=True))
+                random.shuffle(qids)
+                calc_deadline = min(
+                    timezone.now() + datetime.timedelta(minutes=quiz.time_limit_minutes),
+                    quiz.deadline or (timezone.now() + datetime.timedelta(days=1))
+                )
+                attempt = QuizAttempt.objects.create(
+                    student=request.user,
+                    quiz=quiz,
+                    deadline=calc_deadline,
+                    question_order=qids,
+                    saved_answers={},
+                    locked_question_ids=[],
+                    current_question_index=0
+                )
+
+            now = timezone.now()
+            remaining_seconds = int((attempt.deadline - now).total_seconds())
+            if remaining_seconds <= 0:
+                return _finalize_quiz_submission(request, quiz, attempt, is_timeout=True)
+
+            try:
+                attempt.save_answers_from_post(request.POST)
+            except ValidationError as exc:
+                err_msg = exc.messages[0] if getattr(exc, 'messages', None) else "Invalid answer submission."
+                messages.error(request, err_msg)
+                request.session.pop(rendered_key, None)
+                return redirect('take_quiz', quiz_id=quiz.id)
+
+            action = request.POST.get('action', 'submit_all')
+            if action == 'submit_all' or action == 'submit':
+                return _finalize_quiz_submission(request, quiz, attempt, is_timeout=False)
+
+            return redirect('take_quiz', quiz_id=quiz.id)
+
+    # 4. GET request: Fetch or create active attempt
     attempt = QuizAttempt.objects.filter(
         student=request.user,
         quiz=quiz,
@@ -1172,24 +1261,6 @@ def take_quiz(request, quiz_id):
     if remaining_seconds <= 0:
         return _finalize_quiz_submission(request, quiz, attempt, is_timeout=True)
 
-    # 6. Handle POST: saving answers & submitting
-    if request.method == 'POST':
-        for q in quiz.questions.all():
-            field_name = f"question_{q.id}"
-            if field_name in request.POST:
-                student_ans = request.POST.get(field_name, "").strip()
-                # Enforce that locked questions cannot be modified
-                if str(q.id) not in attempt.locked_question_ids:
-                    attempt.saved_answers[str(q.id)] = student_ans
-
-        action = request.POST.get('action', 'submit_all')
-        if action == 'submit_all' or action == 'submit':
-            attempt.save()
-            return _finalize_quiz_submission(request, quiz, attempt, is_timeout=False)
-
-        attempt.save()
-        return redirect('take_quiz', quiz_id=quiz.id)
-
     # 7. GET request: render the examination page
 
     questions_map = {q.id: q for q in quiz.questions.all()}
@@ -1217,34 +1288,108 @@ def take_quiz(request, quiz_id):
     })
 
 
+@student_required
+def save_quiz_progress(request, quiz_id):
+    """
+    CSRF-protected endpoint for saving in-progress quiz answers upon meaningful
+    student input so answers are safely persisted before final submission.
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
+    session_pin_key = f'pin_verified_quiz_{quiz_id}'
+    legacy_pin_key = f'verified_quiz_{quiz_id}_user_{request.user.id}'
+    if not request.session.get(session_pin_key) and not request.session.get(legacy_pin_key):
+        return JsonResponse({'status': 'error', 'message': 'PIN verification required.'}, status=403)
+
+    now = timezone.now()
+    with transaction.atomic():
+        quiz = get_object_or_404(Quiz, id=quiz_id)
+
+        if not quiz.is_active:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'This quiz is currently inactive and no longer accepting answers.',
+            }, status=403)
+
+        if quiz.deadline and now > quiz.deadline:
+            return JsonResponse({'status': 'error', 'message': 'Quiz deadline has passed.'}, status=400)
+
+        attempt = QuizAttempt.objects.select_for_update().filter(
+            student=request.user,
+            quiz=quiz,
+        ).first()
+        if not attempt:
+            return JsonResponse({'status': 'error', 'message': 'No active quiz attempt found.'}, status=404)
+
+        if attempt.is_completed or QuizSubmission.objects.filter(student=request.user, quiz=quiz).exists():
+            return JsonResponse({
+                'status': 'error',
+                'message': 'This quiz has already been submitted.',
+            }, status=409)
+
+        if attempt.deadline and now > attempt.deadline:
+            return JsonResponse({'status': 'error', 'message': 'Attempt timer has expired.'}, status=400)
+
+        try:
+            attempt.save_answers_from_post(request.POST)
+        except ValidationError as exc:
+            err_msg = exc.messages[0] if getattr(exc, 'messages', None) else 'Invalid answer submission.'
+            return JsonResponse({'status': 'error', 'message': err_msg}, status=400)
+
+        saved_count = len(attempt.saved_answers or {})
+
+    return JsonResponse({
+        'status': 'saved',
+        'saved_count': saved_count,
+    })
+
+
 def _finalize_quiz_submission(request, quiz, attempt, is_timeout=False):
     """
-    Helper to grade saved answers, record submission with DSA v2 signature,
-    update attempt status, send notifications, and record audit log.
+    Helper to atomically lock the QuizAttempt, grade the latest persisted answers,
+    record submission with DSA v2 signature, update attempt status, send notifications,
+    and record audit log.
     """
     ip = get_client_ip(request)
-    questions = quiz.questions.all()
-    total_questions = questions.count()
-    correct_count = 0
-    saved_answers = attempt.saved_answers
-
-    for q in questions:
-        ans = saved_answers.get(str(q.id), "").strip()
-        is_corr = False
-        if q.question_type == 'ID':
-            is_corr = bool(ans and ans.lower() == q.correct_answer.strip().lower())
-        elif q.question_type == 'TF':
-            is_corr = bool(ans and ans.capitalize() == q.correct_answer.strip().capitalize())
-        else:  # MCQ
-            is_corr = bool(ans and ans.upper() == q.correct_answer.strip().upper())
-
-        if is_corr:
-            correct_count += 1
-
-    score = float(correct_count)
-    percentage = round((score / total_questions) * 100.0, 2) if total_questions > 0 else 0.0
 
     with transaction.atomic():
+        locked_attempt = QuizAttempt.objects.select_for_update().get(pk=attempt.pk)
+
+        existing_submission = QuizSubmission.objects.filter(
+            student=request.user,
+            quiz=quiz
+        ).first()
+        if existing_submission:
+            if not locked_attempt.is_completed:
+                locked_attempt.is_completed = True
+                locked_attempt.save(update_fields=['is_completed'])
+            return redirect('quiz_result', submission_id=existing_submission.id)
+
+        if locked_attempt.is_completed:
+            return redirect('student_dashboard')
+
+        questions = quiz.questions.all()
+        total_questions = questions.count()
+        correct_count = 0
+        saved_answers = dict(locked_attempt.saved_answers or {})
+
+        for q in questions:
+            ans = str(saved_answers.get(str(q.id), "")).strip()
+            is_corr = False
+            if q.question_type == 'ID':
+                is_corr = bool(ans and ans.lower() == q.correct_answer.strip().lower())
+            elif q.question_type == 'TF':
+                is_corr = bool(ans and ans.capitalize() == q.correct_answer.strip().capitalize())
+            else:  # MCQ
+                is_corr = bool(ans and ans.upper() == q.correct_answer.strip().upper())
+
+            if is_corr:
+                correct_count += 1
+
+        score = float(correct_count)
+        percentage = round((score / total_questions) * 100.0, 2) if total_questions > 0 else 0.0
+
         submission = QuizSubmission(
             student=request.user,
             quiz=quiz,
@@ -1268,8 +1413,8 @@ def _finalize_quiz_submission(request, quiz, attempt, is_timeout=False):
         )
         submission.save(update_fields=['dsa_signature'])
 
-        attempt.is_completed = True
-        attempt.save()
+        locked_attempt.is_completed = True
+        locked_attempt.save(update_fields=['is_completed'])
 
         action_type = 'EXAM_TIMEOUT_SUBMITTED' if is_timeout else 'EXAM_SUBMITTED'
         AuditLog.objects.create(

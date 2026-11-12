@@ -1,8 +1,26 @@
 import datetime
+from collections.abc import Mapping
 from django.apps import apps
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+
+
+def get_session_inactivity_timeout_seconds(default=1800):
+    """
+    Safely coerces settings.SESSION_INACTIVITY_TIMEOUT to a positive integer
+    number of seconds, falling back to `default` (1800s / 30 min) on invalid values.
+    """
+    raw_value = getattr(settings, 'SESSION_INACTIVITY_TIMEOUT', default)
+    if isinstance(raw_value, bool):
+        return default
+    try:
+        seconds = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return seconds if seconds > 0 else default
 
 
 class StudentProfile(models.Model):
@@ -218,8 +236,21 @@ class ActiveSession(models.Model):
     last_activity = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def is_expired(self, timeout_minutes=5):
-        return timezone.now() - self.last_activity > datetime.timedelta(minutes=timeout_minutes)
+    def is_expired(self, timeout_minutes=None, timeout_seconds=None):
+        if timeout_seconds is None:
+            if timeout_minutes is not None:
+                try:
+                    timeout_seconds = max(0, int(timeout_minutes) * 60)
+                except (TypeError, ValueError):
+                    timeout_seconds = get_session_inactivity_timeout_seconds()
+            else:
+                timeout_seconds = get_session_inactivity_timeout_seconds()
+        else:
+            try:
+                timeout_seconds = max(0, int(timeout_seconds))
+            except (TypeError, ValueError):
+                timeout_seconds = get_session_inactivity_timeout_seconds()
+        return timezone.now() - self.last_activity > datetime.timedelta(seconds=timeout_seconds)
 
     def __str__(self):
         return f"ActiveSession: {self.user.username} ({self.session_key})"
@@ -313,8 +344,70 @@ class QuizAttempt(models.Model):
     current_question_index = models.PositiveIntegerField(default=0)
     is_completed = models.BooleanField(default=False)
 
+    MAX_ID_ANSWER_LENGTH = 200
+
     class Meta:
         unique_together = ('student', 'quiz')
+
+    def save_answers_from_post(self, post_data):
+        """
+        Validates and saves non-locked question answers from POST/mapping data
+        into saved_answers without modifying locked questions or finalizing submission.
+        """
+        if self.is_completed:
+            raise ValidationError("Cannot modify answers for a completed quiz attempt.")
+
+        now = timezone.now()
+        if self.quiz and self.quiz.deadline and now > self.quiz.deadline:
+            raise ValidationError("Cannot modify answers after the quiz deadline has passed.")
+        if self.deadline and now > self.deadline:
+            raise ValidationError("Cannot modify answers after the attempt deadline has passed.")
+
+        if not isinstance(post_data, Mapping):
+            raise ValidationError("Submitted answers must be provided as a mapping.")
+
+        locked = {str(qid) for qid in (self.locked_question_ids or [])}
+        answers = dict(self.saved_answers or {})
+        pending_updates = {}
+
+        for q in self.quiz.questions.all():
+            qid_str = str(q.id)
+            field_name = f"question_{q.id}"
+            if field_name not in post_data or qid_str in locked:
+                continue
+
+            raw_val = post_data.get(field_name)
+            if not isinstance(raw_val, str):
+                raise ValidationError(f"Malformed answer value for question {q.id}.")
+            if '\x00' in raw_val:
+                raise ValidationError(f"Invalid control character in answer for question {q.id}.")
+
+            val = raw_val.strip()
+            if q.question_type == 'MCQ':
+                if val != '':
+                    val = val.upper()
+                    if val not in ('A', 'B', 'C', 'D'):
+                        raise ValidationError(f"Invalid multiple-choice option for question {q.id}.")
+            elif q.question_type == 'TF':
+                if val != '':
+                    val = val.capitalize()
+                    if val not in ('True', 'False'):
+                        raise ValidationError(f"Invalid True/False answer for question {q.id}.")
+            elif q.question_type == 'ID':
+                if len(val) > self.MAX_ID_ANSWER_LENGTH:
+                    raise ValidationError(
+                        f"Identification answer for question {q.id} exceeds {self.MAX_ID_ANSWER_LENGTH} characters."
+                    )
+
+            if answers.get(qid_str) != val:
+                pending_updates[qid_str] = val
+
+        if pending_updates:
+            answers.update(pending_updates)
+            self.saved_answers = answers
+            self.save(update_fields=['saved_answers'])
+            return True
+        return False
 
     def __str__(self):
         return f"Attempt: {self.student.username} on {self.quiz.title} (Completed: {self.is_completed})"

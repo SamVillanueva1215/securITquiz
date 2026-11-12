@@ -1438,184 +1438,83 @@ class SingleActiveSessionTests(TestCase):
         active = ActiveSession.objects.get(user=self.student)
         self.assertEqual(active.session_key, self.client.session.session_key)
 
-    def test_second_device_redirects_to_waiting_for_approval(self):
-        """Second device login detects active session and creates a 1-minute mutual authorization request."""
-        # Device 1 logs in
+    def test_second_device_login_rejected_while_first_remains_active(self):
+        """Second Student login is rejected while first session remains authenticated and untouched."""
         client1 = Client()
-        client1.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        res1 = client1.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        self.assertRedirects(res1, reverse('student_dashboard'))
         original_key = ActiveSession.objects.get(user=self.student).session_key
 
-        # Device 2 attempts login
         client2 = Client()
-        response = client2.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        self.assertRedirects(response, reverse('waiting_for_approval'))
+        res2 = client2.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        self.assertEqual(res2.status_code, 200)
+        self.assertTemplateUsed(res2, 'quiz/login.html')
+        self.assertContains(res2, 'already has an active session')
 
-        # Device 2 sees waiting for approval
-        waiting_page = client2.get(reverse('waiting_for_approval'))
-        self.assertEqual(waiting_page.status_code, 200)
-        self.assertTemplateUsed(waiting_page, 'quiz/waiting_for_approval.html')
-        self.assertContains(waiting_page, 'Waiting for Approval')
+        dash2 = client2.get(reverse('student_dashboard'))
+        self.assertRedirects(dash2, f"{reverse('login')}?next={reverse('student_dashboard')}")
 
-        # Authorization request created in database
-        auth_req = DeviceAuthorizationRequest.objects.filter(user=self.student, status='PENDING').first()
-        self.assertIsNotNone(auth_req)
-        self.assertEqual(auth_req.requesting_session_key, client2.session.session_key)
-        self.assertFalse(auth_req.is_expired())
-
-        # Device 1 session remains active
+        dash1 = client1.get(reverse('student_dashboard'))
+        self.assertEqual(dash1.status_code, 200)
         active = ActiveSession.objects.get(user=self.student)
         self.assertEqual(active.session_key, original_key)
 
-    def test_mutual_authorization_approval_flow(self):
-        """
-        Complete Mutual Authorization Flow:
-        1. Device A is active.
-        2. Device B requests login -> waiting for approval.
-        3. Device A receives on-screen notification via pending_device_request.
-        4. Device A approves -> Device A is logged out.
-        5. Device B check_approval_status returns APPROVED and becomes the new active session.
-        6. If Device A tries to log in again, Device B is now the authorization authority!
-        """
-        client_a = Client()
-        client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        key_a = ActiveSession.objects.get(user=self.student).session_key
+    def test_student_can_login_on_second_device_after_post_logout(self):
+        """After Device 1 logs out via POST, Device 2 can log in normally."""
+        client1 = Client()
+        client1.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        self.assertEqual(client1.get(reverse('student_dashboard')).status_code, 200)
 
-        client_b = Client()
-        res_b = client_b.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        self.assertRedirects(res_b, reverse('waiting_for_approval'))
+        logout_res = client1.post(reverse('logout'))
+        self.assertRedirects(logout_res, reverse('login'))
+        self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
 
-        # Device A checks for pending requests
-        pending_res = client_a.get(reverse('pending_device_request'))
-        data_a = json.loads(pending_res.content)
-        self.assertTrue(data_a['has_request'])
-        req_id = data_a['request_id']
+        client2 = Client()
+        res2 = client2.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
+        self.assertRedirects(res2, reverse('student_dashboard'))
+        self.assertEqual(client2.get(reverse('student_dashboard')).status_code, 200)
 
-        # Device A approves
-        approve_res = client_a.post(
-            reverse('respond_device_request'),
-            json.dumps({'request_id': req_id, 'decision': 'approve'}),
-            content_type='application/json'
-        )
-        data_approve = json.loads(approve_res.content)
-        self.assertEqual(data_approve['status'], 'ok')
-        self.assertTrue(data_approve['logged_out'])
-
-        # Device A is now logged out
-        dash_a = client_a.get(reverse('student_dashboard'))
-        self.assertRedirects(dash_a, f"{reverse('login')}?next={reverse('student_dashboard')}")
-
-        # Device B polls approval status
-        status_res = client_b.get(reverse('check_approval_status'))
-        data_b = json.loads(status_res.content)
-        self.assertEqual(data_b['status'], 'APPROVED')
-
-        # Device B is now authenticated and active!
-        dash_b = client_b.get(reverse('student_dashboard'))
-        self.assertEqual(dash_b.status_code, 200)
-
-        active = ActiveSession.objects.get(user=self.student)
-        self.assertEqual(active.session_key, client_b.session.session_key)
-        self.assertNotEqual(active.session_key, key_a)
-
-        # Now: Device A attempts login again -> Device B must approve!
-        res_a2 = client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        self.assertRedirects(res_a2, reverse('waiting_for_approval'))
-
-        # Device B receives on-screen notification!
-        pending_b = client_b.get(reverse('pending_device_request'))
-        data_b2 = json.loads(pending_b.content)
-        self.assertTrue(data_b2['has_request'])
-
-    def test_mutual_authorization_denial_flow(self):
-        """Device A denies login request: Device A remains active, Device B is rejected."""
-        client_a = Client()
-        client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        key_a = ActiveSession.objects.get(user=self.student).session_key
-
-        client_b = Client()
-        client_b.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-
-        pending_res = client_a.get(reverse('pending_device_request'))
-        req_id = json.loads(pending_res.content)['request_id']
-
-        # Device A denies
-        deny_res = client_a.post(
-            reverse('respond_device_request'),
-            json.dumps({'request_id': req_id, 'decision': 'deny'}),
-            content_type='application/json'
-        )
-        data_deny = json.loads(deny_res.content)
-        self.assertEqual(data_deny['status'], 'ok')
-        self.assertFalse(data_deny['logged_out'])
-
-        # Device A remains active
-        dash_a = client_a.get(reverse('student_dashboard'))
-        self.assertEqual(dash_a.status_code, 200)
-        self.assertEqual(ActiveSession.objects.get(user=self.student).session_key, key_a)
-
-        # Device B polls status -> DENIED
-        status_res = client_b.get(reverse('check_approval_status'))
-        self.assertEqual(json.loads(status_res.content)['status'], 'DENIED')
-
-    def test_mutual_authorization_expiration_after_1_minute(self):
-        """Requests unapproved after 1 minute expire; Device A remains active, Device B rejected."""
+    def test_revoked_session_cannot_access_protected_routes(self):
+        """Non-matching Student session keys are logged out cleanly by middleware."""
         client_a = Client()
         client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
 
-        client_b = Client()
-        client_b.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-
-        auth_req = DeviceAuthorizationRequest.objects.get(user=self.student, status='PENDING')
-        # Fast-forward past 1 minute
-        auth_req.expires_at = timezone.now() - timedelta(seconds=5)
-        auth_req.save()
-
-        # Device B polls status -> EXPIRED
-        status_res = client_b.get(reverse('check_approval_status'))
-        self.assertEqual(json.loads(status_res.content)['status'], 'EXPIRED')
-
-        # Expired request cannot be approved
-        respond_res = client_a.post(
-            reverse('respond_device_request'),
-            json.dumps({'request_id': auth_req.id, 'decision': 'approve'}),
-            content_type='application/json'
-        )
-        self.assertEqual(respond_res.status_code, 400)
-
-    def test_revoked_device_cannot_approve(self):
-        """Only the currently active session can approve or deny (revoked sessions are rejected)."""
-        client_a = Client()
-        client_a.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-
-        # Revoke client_a active session key in DB
         ActiveSession.objects.filter(user=self.student).update(session_key='different_key')
 
-        res = client_a.post(
-            reverse('respond_device_request'),
-            json.dumps({'request_id': 999, 'decision': 'approve'}),
-            content_type='application/json'
-        )
-        # Blocked either by middleware revocation redirect (302) or view permission (403)
-        self.assertIn(res.status_code, [302, 403])
+        res = client_a.get(reverse('student_dashboard'))
+        self.assertRedirects(res, reverse('login'))
 
-    def test_logout_releases_active_session(self):
-        """Logging out cleanly deletes ActiveSession record."""
+    def test_logout_requires_post_and_releases_active_session(self):
+        """GET logout does not mutate state; POST logout releases matching ActiveSession record."""
         self.client.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
         self.assertTrue(ActiveSession.objects.filter(user=self.student).exists())
 
-        self.client.get(reverse('logout'))
+        get_res = self.client.get(reverse('logout'))
+        self.assertEqual(get_res.status_code, 405)
+        self.assertTrue(ActiveSession.objects.filter(user=self.student).exists())
+        self.assertEqual(self.client.get(reverse('student_dashboard')).status_code, 200)
+
+        post_res = self.client.post(reverse('logout'))
+        self.assertRedirects(post_res, reverse('login'))
         self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
 
-    def test_inactivity_expiration_after_5_minutes(self):
-        """Middleware automatically expires active session after 5 minutes of inactivity with audit log."""
+    def test_inactivity_expiration_after_configured_timeout(self):
+        """Middleware respects default 30-minute SESSION_INACTIVITY_TIMEOUT and logs SESSION_EXPIRED."""
         self.client.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
         active = ActiveSession.objects.get(user=self.student)
 
-        # Simulate 6 minutes of inactivity (> 5 minutes)
-        active.last_activity = timezone.now() - timedelta(minutes=6)
+        # 10 minutes of inactivity is within the 30-minute default window
+        active.last_activity = timezone.now() - timedelta(minutes=10)
+        active.save()
+        still_active_res = self.client.get(reverse('student_dashboard'))
+        self.assertEqual(still_active_res.status_code, 200)
+
+        # Simulate 31 minutes of inactivity (> 30 minutes)
+        active.refresh_from_db()
+        active.last_activity = timezone.now() - timedelta(minutes=31)
         active.save()
 
-        # Access an authenticated view
+        # Access an authenticated view -> expired & logged out
         response = self.client.get(reverse('student_dashboard'))
         self.assertRedirects(response, reverse('login'))
         self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
@@ -1625,13 +1524,12 @@ class SingleActiveSessionTests(TestCase):
         self.assertTrue(SecurityLog.objects.filter(username_attempted=self.student.username, action='SESSION_EXPIRED').exists())
 
     def test_stale_active_session_cleanup_at_login(self):
-        """Stale/expired ActiveSession records (> 5 min) do not block legitimate logins and create SESSION_EXPIRED audit log."""
-        # Create an expired active session
+        """Stale/expired ActiveSession records (> 30 min) do not block legitimate logins and create SESSION_EXPIRED audit log."""
         ActiveSession.objects.create(
             user=self.student,
             session_key='stale_key_123',
             ip_address='192.168.1.50',
-            last_activity=timezone.now() - timedelta(minutes=10)
+            last_activity=timezone.now() - timedelta(minutes=35)
         )
 
         client = Client()
@@ -1646,25 +1544,44 @@ class SingleActiveSessionTests(TestCase):
         self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_EXPIRED').exists())
 
     def test_independent_accounts_active_simultaneously(self):
-        """Different accounts can maintain independent active sessions without conflict."""
+        """Different Student accounts and Instructors can maintain independent active sessions simultaneously."""
+        student_bob = User.objects.create_user(
+            username='student_bob',
+            email='bob_stu@hogwarts.edu',
+            password=self.password
+        )
+        student_group, _ = Group.objects.get_or_create(name='Student')
+        student_bob.groups.add(student_group)
+
         client_student = Client()
         res_s = client_student.post(reverse('login'), {'username': 'student_alice', 'password': self.password})
-        self.assertEqual(res_s.status_code, 302)
+        self.assertRedirects(res_s, reverse('student_dashboard'))
+
+        client_bob = Client()
+        res_b = client_bob.post(reverse('login'), {'username': 'student_bob', 'password': self.password})
+        self.assertRedirects(res_b, reverse('student_dashboard'))
 
         client_inst = Client()
         res_i = client_inst.post(reverse('login'), {'username': 'prof_flitwick', 'password': self.password})
-        self.assertEqual(res_i.status_code, 302)
+        self.assertRedirects(res_i, reverse('instructor_dashboard'))
 
         self.assertEqual(ActiveSession.objects.count(), 2)
+        self.assertEqual(client_student.get(reverse('student_dashboard')).status_code, 200)
+        self.assertEqual(client_bob.get(reverse('student_dashboard')).status_code, 200)
+        self.assertEqual(client_inst.get(reverse('instructor_dashboard')).status_code, 200)
 
-    def test_instructor_single_session_protection(self):
-        """Mutual Two-Device Authorization applies equally to Instructors."""
+    def test_instructor_not_blocked_by_student_single_session_restriction(self):
+        """Instructors can hold concurrent sessions across multiple clients without blocking."""
         client1 = Client()
-        client1.post(reverse('login'), {'username': 'prof_flitwick', 'password': self.password})
+        res1 = client1.post(reverse('login'), {'username': 'prof_flitwick', 'password': self.password})
+        self.assertRedirects(res1, reverse('instructor_dashboard'))
 
         client2 = Client()
         res2 = client2.post(reverse('login'), {'username': 'prof_flitwick', 'password': self.password})
-        self.assertRedirects(res2, reverse('waiting_for_approval'))
+        self.assertRedirects(res2, reverse('instructor_dashboard'))
+
+        self.assertEqual(client1.get(reverse('instructor_dashboard')).status_code, 200)
+        self.assertEqual(client2.get(reverse('instructor_dashboard')).status_code, 200)
 
 
 class ExaminationSecurityAndLifecycleTests(TestCase):
@@ -1992,60 +1909,44 @@ class ComprehensiveAuditAndSessionLifecycleTests(TestCase):
         self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_CREATED').exists())
         self.assertTrue(AuditLog.objects.filter(actor=self.student, action='LOGIN_SUCCESS').exists())
 
-        # Logout records SESSION_LOGOUT and LOGOUT
-        res_logout = client.get(reverse('logout'))
+        # Logout via POST records SESSION_LOGOUT and LOGOUT
+        res_logout = client.post(reverse('logout'))
         self.assertRedirects(res_logout, reverse('login'))
         self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_LOGOUT').exists())
         self.assertTrue(AuditLog.objects.filter(actor=self.student, action='LOGOUT').exists())
 
     def test_session_revoked_audit_logging_on_superseded_device(self):
-        """Verifies SESSION_REVOKED is recorded when a session is superseded by another device."""
+        """Verifies SESSION_REVOKED is recorded when a session key does not match ActiveSession."""
         client_a = Client()
         client_a.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
         self.assertTrue(ActiveSession.objects.filter(user=self.student).exists())
 
-        # Change session key to simulate another device taking over
         ActiveSession.objects.filter(user=self.student).update(session_key='superseded_key')
 
-        # Next request from Client A is intercepted and logs SESSION_REVOKED
         res = client_a.get(reverse('student_dashboard'))
         self.assertRedirects(res, reverse('login'))
         self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_REVOKED').exists())
         self.assertTrue(SecurityLog.objects.filter(username_attempted='audit_student', action='SESSION_REVOKED').exists())
 
-    def test_device_authorization_lifecycle_audit_events(self):
+    def test_rejected_concurrent_student_login_audit_events(self):
         """
-        Verifies complete audit trails for two-device authorization:
-        DEVICE_AUTHORIZATION_REQUESTED, DEVICE_AUTHORIZATION_APPROVED, DEVICE_AUTHORIZATION_TRANSFERRED.
+        Verifies CONCURRENT_LOGIN_BLOCKED audit log and BLOCKED_CONCURRENT_LOGIN security log
+        when a Student attempts a duplicate login while an active session exists.
         """
         client_a = Client()
         client_a.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
 
         client_b = Client()
         res_b = client_b.post(reverse('login'), {'username': 'audit_student', 'password': self.password})
-        self.assertRedirects(res_b, reverse('waiting_for_approval'))
+        self.assertEqual(res_b.status_code, 200)
+        self.assertContains(res_b, 'already has an active session')
 
-        # Verifies DEVICE_AUTHORIZATION_REQUESTED
-        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='DEVICE_AUTHORIZATION_REQUESTED').exists())
-
-        # Device A approves
-        pending = client_a.get(reverse('pending_device_request'))
-        req_id = json.loads(pending.content)['request_id']
-
-        client_a.post(
-            reverse('respond_device_request'),
-            json.dumps({'request_id': req_id, 'decision': 'approve'}),
-            content_type='application/json'
+        self.assertTrue(
+            AuditLog.objects.filter(actor=self.student, action='CONCURRENT_LOGIN_BLOCKED', status='BLOCKED').exists()
         )
-
-        # Verifies DEVICE_AUTHORIZATION_APPROVED
-        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='DEVICE_AUTHORIZATION_APPROVED').exists())
-
-        # Device B polls approval status
-        client_b.get(reverse('check_approval_status'))
-
-        # Verifies DEVICE_AUTHORIZATION_TRANSFERRED
-        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='DEVICE_AUTHORIZATION_TRANSFERRED').exists())
+        self.assertTrue(
+            SecurityLog.objects.filter(username_attempted='audit_student', action='BLOCKED_CONCURRENT_LOGIN', is_success=False).exists()
+        )
 
     def test_server_issued_device_id_cookie_and_storage(self):
         """Verifies server issues secure securit_device_id cookie and associates it with ActiveSession."""
@@ -2901,3 +2802,1044 @@ class PublicAdminRegistrationProtectionTests(TestCase):
         })
         self.assertEqual(res.status_code, 403)
         self.assertFalse(User.objects.filter(username='hacker_inst').exists())
+
+
+class Phase2CRegistrationSecurityTests(TestCase):
+    """
+    Phase 2C Tests (1-13): Strict registration restrictions, manipulated POST rejection,
+    authenticated registration blocking, duplicate username/email prevention, and Phase 2A/2B preservation.
+    """
+    def setUp(self):
+        self.client = Client()
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+        self.admin_group, _ = Group.objects.get_or_create(name='Administrator')
+
+        self.existing_student = User.objects.create_user(
+            username='existing_stu',
+            email='existing_stu@uni.edu',
+            password='V3ryStr0ng!Pass2026'
+        )
+        self.existing_student.groups.add(self.student_group)
+
+    def test_student_registration_assigns_only_student_role(self):
+        res = self.client.post(reverse('register'), {
+            'full_name': 'Alice Student',
+            'student_id': 'STU-2C-01',
+            'email': 'alice2c@uni.edu',
+            'username': 'alice_2c',
+            'password1': 'V3ryStr0ng!Pass2026',
+            'password2': 'V3ryStr0ng!Pass2026',
+        })
+        self.assertRedirects(res, reverse('login'))
+        user = User.objects.get(username='alice_2c')
+        self.assertEqual(list(user.groups.values_list('name', flat=True)), ['Student'])
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertTrue(user.is_active)
+
+    def test_student_registration_rejects_manipulated_role_and_flag_fields(self):
+        manipulated_payloads = [
+            {'role': 'Instructor'},
+            {'role': 'Administrator'},
+            {'group': 'Administrator'},
+            {'groups': 'Instructor'},
+            {'account_type': 'admin'},
+            {'user_type': 'superuser'},
+            {'is_staff': 'true'},
+            {'is_superuser': 'true'},
+            {'is_active': 'false'},
+            {'permissions': 'quiz.view_auditlog'},
+            {'user_permissions': '1'},
+        ]
+        for idx, extra in enumerate(manipulated_payloads):
+            uname = f'manip_stu_{idx}'
+            data = {
+                'full_name': 'Manipulated User',
+                'student_id': f'STU-MANIP-{idx}',
+                'email': f'manip_{idx}@uni.edu',
+                'username': uname,
+                'password1': 'V3ryStr0ng!Pass2026',
+                'password2': 'V3ryStr0ng!Pass2026',
+            }
+            data.update(extra)
+            res = self.client.post(reverse('register'), data)
+            self.assertEqual(res.status_code, 403)
+            self.assertFalse(User.objects.filter(username=uname).exists())
+
+    def test_instructor_cannot_self_approve_via_registration_post(self):
+        res = self.client.post(reverse('register_instructor'), {
+            'full_name': 'Self Approve Attempt',
+            'department': 'CS',
+            'email': 'selfapp@uni.edu',
+            'username': 'self_approve_inst',
+            'password1': 'V3ryStr0ng!Pass2026',
+            'password2': 'V3ryStr0ng!Pass2026',
+            'status': 'APPROVED',
+        })
+        # Form succeeds only with PENDING profile; 'status' is not a form field so ignored
+        self.assertRedirects(res, reverse('login'))
+        user = User.objects.get(username='self_approve_inst')
+        self.assertEqual(user.instructor_profile.status, 'PENDING')
+        self.assertFalse(user.instructor_profile.is_authorized())
+
+    def test_authenticated_users_cannot_register_or_escalate_via_registration_routes(self):
+        self.client.force_login(self.existing_student)
+
+        # GET redirects authenticated user away from registration
+        res_get = self.client.get(reverse('register'))
+        self.assertRedirects(res_get, reverse('student_dashboard'))
+
+        # POST from authenticated user is strictly denied with 403
+        res_post1 = self.client.post(reverse('register'), {
+            'full_name': 'Extra Account',
+            'student_id': 'STU-EXTRA',
+            'email': 'extra@uni.edu',
+            'username': 'extra_user',
+            'password1': 'V3ryStr0ng!Pass2026',
+            'password2': 'V3ryStr0ng!Pass2026',
+        })
+        self.assertEqual(res_post1.status_code, 403)
+        self.assertFalse(User.objects.filter(username='extra_user').exists())
+
+        res_post2 = self.client.post(reverse('register_instructor'), {
+            'full_name': 'Self Escalate',
+            'department': 'CS',
+            'email': 'escalate@uni.edu',
+            'username': 'escalate_user',
+            'password1': 'V3ryStr0ng!Pass2026',
+            'password2': 'V3ryStr0ng!Pass2026',
+        })
+        self.assertEqual(res_post2.status_code, 403)
+        self.assertFalse(User.objects.filter(username='escalate_user').exists())
+        self.existing_student.refresh_from_db()
+        self.assertEqual(list(self.existing_student.groups.values_list('name', flat=True)), ['Student'])
+
+    def test_duplicate_username_and_email_rejected_in_public_registration(self):
+        # Duplicate username
+        res1 = self.client.post(reverse('register'), {
+            'full_name': 'Dup Username',
+            'student_id': 'STU-DUP1',
+            'email': 'unique_email@uni.edu',
+            'username': 'existing_stu',
+            'password1': 'V3ryStr0ng!Pass2026',
+            'password2': 'V3ryStr0ng!Pass2026',
+        })
+        self.assertEqual(res1.status_code, 200)
+        self.assertEqual(User.objects.filter(email='unique_email@uni.edu').count(), 0)
+
+        # Duplicate email (case-insensitive)
+        res2 = self.client.post(reverse('register'), {
+            'full_name': 'Dup Email',
+            'student_id': 'STU-DUP2',
+            'email': 'EXISTING_STU@uni.edu',
+            'username': 'brand_new_stu',
+            'password1': 'V3ryStr0ng!Pass2026',
+            'password2': 'V3ryStr0ng!Pass2026',
+        })
+        self.assertEqual(res2.status_code, 200)
+        self.assertFalse(User.objects.filter(username='brand_new_stu').exists())
+
+
+class Phase2CRoleAuthAndRedirectTests(TestCase):
+    """
+    Phase 2C Tests (14-23): Role-based authentication, cross-role isolation,
+    pending/rejected instructor denial, unrecognized role handling, and open redirect prevention.
+    """
+    def setUp(self):
+        self.password = 'V3ryStr0ng!Pass2026'
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+        self.admin_group, _ = Group.objects.get_or_create(name='Administrator')
+
+        self.student = User.objects.create_user(username='stu_2c', email='stu2c@uni.edu', password=self.password)
+        self.student.groups.add(self.student_group)
+
+        self.approved_inst = User.objects.create_user(username='inst_app', email='app@uni.edu', password=self.password)
+        self.approved_inst.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(user=self.approved_inst, full_name='Approved Inst', status='APPROVED')
+
+        self.pending_inst = User.objects.create_user(username='inst_pend', email='pend@uni.edu', password=self.password)
+        self.pending_inst.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(user=self.pending_inst, full_name='Pending Inst', status='PENDING')
+
+        self.rejected_inst = User.objects.create_user(username='inst_rej', email='rej@uni.edu', password=self.password)
+        self.rejected_inst.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.rejected_inst, full_name='Rejected Inst', status='REJECTED', rejection_reason='Unverified'
+        )
+
+        # Administrator WITHOUT is_superuser=True (Phase 2B least-privilege)
+        self.admin_user = User.objects.create_user(
+            username='admin_2c', email='admin2c@uni.edu', password=self.password, is_staff=True, is_superuser=False
+        )
+        self.admin_user.groups.add(self.admin_group)
+
+        self.norole_user = User.objects.create_user(username='norole_2c', email='norole@uni.edu', password=self.password)
+
+    def test_role_login_redirections_and_cross_role_denials(self):
+        # Student -> student_dashboard, denied instructor & admin routes
+        c_stu = Client()
+        res_s = c_stu.post(reverse('login'), {'username': 'stu_2c', 'password': self.password})
+        self.assertRedirects(res_s, reverse('student_dashboard'))
+        self.assertEqual(c_stu.get(reverse('instructor_dashboard')).status_code, 403)
+        self.assertEqual(c_stu.get(reverse('security_logs')).status_code, 403)
+
+        # Approved Instructor -> instructor_dashboard, denied student & admin routes
+        c_inst = Client()
+        res_i = c_inst.post(reverse('login'), {'username': 'inst_app', 'password': self.password})
+        self.assertRedirects(res_i, reverse('instructor_dashboard'))
+        self.assertEqual(c_inst.get(reverse('student_dashboard')).status_code, 403)
+        self.assertEqual(c_inst.get(reverse('security_logs')).status_code, 403)
+
+        # Pending Instructor -> denied instructor features (403 with pending message)
+        c_pend = Client()
+        res_p = c_pend.post(reverse('login'), {'username': 'inst_pend', 'password': self.password}, follow=True)
+        self.assertEqual(res_p.status_code, 403)
+        self.assertContains(res_p, 'Pending Approval', status_code=403)
+
+        # Rejected Instructor -> denied instructor features (403 with rejection reason)
+        c_rej = Client()
+        res_r = c_rej.post(reverse('login'), {'username': 'inst_rej', 'password': self.password}, follow=True)
+        self.assertEqual(res_r.status_code, 403)
+        self.assertContains(res_r, 'Unverified', status_code=403)
+
+        # Administrator (is_superuser=False) -> security_logs 200
+        c_adm = Client()
+        res_a = c_adm.post(reverse('login'), {'username': 'admin_2c', 'password': self.password})
+        self.assertRedirects(res_a, reverse('security_logs'))
+        self.assertEqual(c_adm.get(reverse('security_logs')).status_code, 200)
+
+    def test_unrecognized_role_denied_login_and_protected_routes(self):
+        c = Client()
+        res = c.post(reverse('login'), {'username': 'norole_2c', 'password': self.password})
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, 'does not have a valid securITquiz role')
+        self.assertFalse(res.wsgi_request.user.is_authenticated)
+
+        # Even if authenticated directly, all protected routes return 403
+        c.force_login(self.norole_user)
+        self.assertEqual(c.get(reverse('student_dashboard')).status_code, 403)
+        self.assertEqual(c.get(reverse('instructor_dashboard')).status_code, 403)
+        self.assertEqual(c.get(reverse('security_logs')).status_code, 403)
+
+    def test_untrusted_next_open_redirect_prevented(self):
+        for evil_next in ['https://evil.example.com/phish', '//evil.example.com/login', 'http://attacker.local/']:
+            c = Client()
+            res = c.post(f"{reverse('login')}?next={evil_next}", {
+                'username': 'stu_2c',
+                'password': self.password,
+                'next': evil_next,
+            })
+            self.assertRedirects(res, reverse('student_dashboard'))
+            c.post(reverse('logout'))
+
+        # Safe local `next` redirect IS honored
+        c2 = Client()
+        res_safe = c2.post(reverse('login'), {
+            'username': 'stu_2c',
+            'password': self.password,
+            'next': reverse('student_profile'),
+        })
+        self.assertRedirects(res_safe, reverse('student_profile'))
+
+
+class Phase2CStudentSingleSessionTests(TestCase):
+    """
+    Phase 2C Tests (24-34): Strict single-active-session enforcement for Students,
+    stale/deleted/corrupted/password-changed cleanup, concurrency protection,
+    and unrestricted concurrent sessions for Instructors and Administrators.
+    """
+    def setUp(self):
+        self.password = 'V3ryStr0ng!Pass2026'
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+        self.admin_group, _ = Group.objects.get_or_create(name='Administrator')
+
+        self.student = User.objects.create_user(username='stu_single', email='stusingle@uni.edu', password=self.password)
+        self.student.groups.add(self.student_group)
+
+        self.instructor = User.objects.create_user(username='inst_multi', email='instmulti@uni.edu', password=self.password)
+        self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(user=self.instructor, full_name='Multi Inst', status='APPROVED')
+
+        self.admin_user = User.objects.create_user(
+            username='admin_multi', email='adminmulti@uni.edu', password=self.password, is_staff=True, is_superuser=False
+        )
+        self.admin_user.groups.add(self.admin_group)
+
+    def test_deleted_django_session_does_not_permanently_lock_student(self):
+        c1 = Client()
+        c1.post(reverse('login'), {'username': 'stu_single', 'password': self.password})
+        active = ActiveSession.objects.get(user=self.student)
+
+        # Simulate Django session deletion / clearsessions while ActiveSession row remained
+        Session.objects.filter(session_key=active.session_key).delete()
+
+        c2 = Client()
+        res2 = c2.post(reverse('login'), {'username': 'stu_single', 'password': self.password})
+        self.assertRedirects(res2, reverse('student_dashboard'))
+        self.assertEqual(c2.get(reverse('student_dashboard')).status_code, 200)
+
+    def test_invalid_session_payload_and_password_change_invalidate_stale_lock(self):
+        c1 = Client()
+        c1.post(reverse('login'), {'username': 'stu_single', 'password': self.password})
+        active = ActiveSession.objects.get(user=self.student)
+
+        # 1. Corrupt Django session payload
+        Session.objects.filter(session_key=active.session_key).update(session_data='corrupted-base64-data')
+        c2 = Client()
+        res2 = c2.post(reverse('login'), {'username': 'stu_single', 'password': self.password})
+        self.assertRedirects(res2, reverse('student_dashboard'))
+
+        # 2. Password change invalidates c2's _auth_user_hash
+        new_pw = 'N3wStr0ng!Pass#2026'
+        self.student.set_password(new_pw)
+        self.student.save()
+
+        c3 = Client()
+        res3 = c3.post(reverse('login'), {'username': 'stu_single', 'password': new_pw})
+        self.assertRedirects(res3, reverse('student_dashboard'))
+        self.assertEqual(c3.get(reverse('student_dashboard')).status_code, 200)
+
+    def test_concurrent_login_integrity_error_rejects_second_student_session(self):
+        """Simulates concurrent race hitting ActiveSession OneToOne UNIQUE constraint."""
+        from unittest.mock import patch
+        from django.db import IntegrityError
+
+        c1 = Client()
+        c1.post(reverse('login'), {'username': 'stu_single', 'password': self.password})
+        key1 = ActiveSession.objects.get(user=self.student).session_key
+
+        c2 = Client()
+        with patch('quiz.views.ActiveSession.objects.create', side_effect=IntegrityError('UNIQUE constraint failed')):
+            res2 = c2.post(reverse('login'), {'username': 'stu_single', 'password': self.password})
+
+        self.assertEqual(res2.status_code, 200)
+        self.assertContains(res2, 'already has an active session')
+        self.assertFalse(res2.wsgi_request.user.is_authenticated)
+        self.assertEqual(ActiveSession.objects.get(user=self.student).session_key, key1)
+        self.assertEqual(c1.get(reverse('student_dashboard')).status_code, 200)
+
+    def test_device_switch_endpoint_cannot_bypass_student_single_session(self):
+        c1 = Client()
+        c1.post(reverse('login'), {'username': 'stu_single', 'password': self.password})
+        key1 = ActiveSession.objects.get(user=self.student).session_key
+
+        c2 = Client()
+        session2 = c2.session
+        session2['pending_switch_user_id'] = self.student.id
+        session2['pending_switch_backend'] = 'django.contrib.auth.backends.ModelBackend'
+        session2.save()
+
+        res = c2.post(reverse('confirm_device_switch'))
+        self.assertRedirects(res, reverse('login'))
+        self.assertEqual(c2.get(reverse('student_dashboard')).status_code, 302)
+        self.assertEqual(ActiveSession.objects.get(user=self.student).session_key, key1)
+        self.assertEqual(c1.get(reverse('student_dashboard')).status_code, 200)
+
+    def test_administrator_accounts_not_blocked_by_student_single_session(self):
+        c1 = Client()
+        res1 = c1.post(reverse('login'), {'username': 'admin_multi', 'password': self.password})
+        self.assertRedirects(res1, reverse('security_logs'))
+
+        c2 = Client()
+        res2 = c2.post(reverse('login'), {'username': 'admin_multi', 'password': self.password})
+        self.assertRedirects(res2, reverse('security_logs'))
+
+        # Both administrator sessions remain authenticated simultaneously
+        self.assertEqual(c1.get(reverse('security_logs')).status_code, 200)
+        self.assertEqual(c2.get(reverse('security_logs')).status_code, 200)
+
+
+class Phase2CSecureLogoutTests(TestCase):
+    """
+    Phase 2C Tests (35-40): POST-only logout, GET protection, CSRF enforcement,
+    session invalidation, and scoped ActiveSession release.
+    """
+    def setUp(self):
+        self.password = 'V3ryStr0ng!Pass2026'
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+        self.student = User.objects.create_user(username='stu_logout', email='stulogout@uni.edu', password=self.password)
+        self.student.groups.add(self.student_group)
+
+    def test_logout_invalidates_session_and_requires_csrf(self):
+        csrf_client = Client(enforce_csrf_checks=True)
+        login_page = csrf_client.get(reverse('login'))
+        csrf_token = login_page.cookies['csrftoken'].value
+
+        res_login = csrf_client.post(reverse('login'), {
+            'username': 'stu_logout',
+            'password': self.password,
+            'csrfmiddlewaretoken': csrf_token,
+        })
+        self.assertRedirects(res_login, reverse('student_dashboard'))
+        old_session_key = csrf_client.session.session_key
+        self.assertTrue(Session.objects.filter(session_key=old_session_key).exists())
+
+        # GET logout does not log out
+        res_get = csrf_client.get(reverse('logout'))
+        self.assertEqual(res_get.status_code, 405)
+        self.assertTrue(Session.objects.filter(session_key=old_session_key).exists())
+
+        # POST logout without CSRF token is rejected with 403
+        res_nocsrf = csrf_client.post(reverse('logout'))
+        self.assertEqual(res_nocsrf.status_code, 403)
+        self.assertTrue(Session.objects.filter(session_key=old_session_key).exists())
+
+        # POST logout with valid CSRF token succeeds and invalidates session
+        new_csrf = csrf_client.cookies['csrftoken'].value
+        res_post = csrf_client.post(reverse('logout'), {'csrfmiddlewaretoken': new_csrf})
+        self.assertRedirects(res_post, reverse('login'))
+        self.assertFalse(Session.objects.filter(session_key=old_session_key).exists())
+        self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
+
+    def test_one_session_cannot_clear_another_sessions_active_record(self):
+        c1 = Client()
+        c1.post(reverse('login'), {'username': 'stu_logout', 'password': self.password})
+        key1 = ActiveSession.objects.get(user=self.student).session_key
+
+        # Simulate a second unrelated session calling POST /logout/ while authenticated as same user
+        c2 = Client()
+        c2.force_login(self.student)
+        self.assertNotEqual(c2.session.session_key, key1)
+
+        c2.post(reverse('logout'))
+
+        # Device 1's ActiveSession record MUST still exist and keep key1
+        active = ActiveSession.objects.get(user=self.student)
+        self.assertEqual(active.session_key, key1)
+        self.assertEqual(c1.get(reverse('student_dashboard')).status_code, 200)
+
+
+class Phase2CAuditAndLogHygieneTests(TestCase):
+    """
+    Phase 2C Tests (41-44): Audit logging of duplicate logins and privilege escalation attempts,
+    and ensuring passwords, hashes, and session keys are never written to logs.
+    """
+    def setUp(self):
+        self.password = 'Sup3rSecret!Pw2026'
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+        self.student = User.objects.create_user(username='stu_audit2c', email='audit2c@uni.edu', password=self.password)
+        self.student.groups.add(self.student_group)
+
+    def test_logs_never_contain_passwords_hashes_or_session_keys(self):
+        c1 = Client()
+        c1.post(reverse('login'), {'username': 'stu_audit2c', 'password': self.password})
+        key1 = c1.session.session_key
+
+        # Trigger duplicate login block
+        c2 = Client()
+        c2.post(reverse('login'), {'username': 'stu_audit2c', 'password': self.password})
+
+        # Trigger failed login
+        c3 = Client()
+        wrong_pw = 'WrongSecret!Pw999'
+        c3.post(reverse('login'), {'username': 'stu_audit2c', 'password': wrong_pw})
+
+        # Trigger unauthorized registration attempt
+        c3.post(reverse('register'), {'username': 'x', 'role': 'Administrator'})
+
+        # Trigger unauthorized role access attempt
+        c1.get(reverse('security_logs'))
+
+        self.assertTrue(AuditLog.objects.filter(action='CONCURRENT_LOGIN_BLOCKED').exists())
+        self.assertTrue(AuditLog.objects.filter(action='UNAUTHORIZED_ACCESS_ATTEMPT').exists())
+
+        for log in AuditLog.objects.all():
+            self.assertNotIn(self.password, log.details)
+            self.assertNotIn(wrong_pw, log.details)
+            self.assertNotIn(self.student.password, log.details)
+            if key1:
+                self.assertNotIn(key1, log.details)
+
+
+class Phase2CInactivityAndQuizSafetyTests(TestCase):
+    """
+    Phase 2C Correction Tests:
+    - Configurable SESSION_INACTIVITY_TIMEOUT (default 1800s / 30 min).
+    - Removal of base.html checkPendingAuth polling and ignoring passive polls in activity tracking.
+    - Event-driven quiz answer auto-save and safe draft preservation on expired quiz POST.
+    - Preservation of Student single-active-session enforcement and Instructor/Admin behavior.
+    """
+    def setUp(self):
+        self.password = 'V3ryStr0ng!Pass2026'
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+
+        self.student = User.objects.create_user(
+            username='stu_quiz_safety', email='safety@uni.edu', password=self.password
+        )
+        self.student.groups.add(self.student_group)
+
+        self.instructor = User.objects.create_user(
+            username='inst_quiz_safety', email='inst_safety@uni.edu', password=self.password
+        )
+        self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor, full_name='Prof Safety', status='APPROVED'
+        )
+
+        self.quiz = Quiz.objects.create(
+            title='30-Min Cryptography Quiz',
+            access_pin='SAFE26',
+            time_limit_minutes=30,
+            deadline=timezone.now() + timedelta(hours=2),
+            created_by=self.instructor,
+            is_active=True
+        )
+        self.q1 = Question.objects.create(
+            quiz=self.quiz,
+            question_text='Which hash is used with DSA?',
+            question_type='MCQ',
+            option_a='SHA-256',
+            option_b='MD5',
+            option_c='CRC32',
+            option_d='ROT13',
+            correct_answer='A'
+        )
+        self.q2 = Question.objects.create(
+            quiz=self.quiz,
+            question_text='DSA stands for Digital Signature Algorithm.',
+            question_type='TF',
+            correct_answer='True'
+        )
+
+    def test_inactivity_timeout_respects_overridden_setting(self):
+        from django.conf import settings
+        self.assertEqual(settings.SESSION_INACTIVITY_TIMEOUT, 1800)
+
+        with override_settings(SESSION_INACTIVITY_TIMEOUT=120):
+            c = Client()
+            c.post(reverse('login'), {'username': 'stu_quiz_safety', 'password': self.password})
+            active = ActiveSession.objects.get(user=self.student)
+
+            # 90s is within 120s timeout
+            active.last_activity = timezone.now() - timedelta(seconds=90)
+            active.save()
+            self.assertEqual(c.get(reverse('student_dashboard')).status_code, 200)
+
+            # 125s exceeds 120s timeout -> expires
+            active.refresh_from_db()
+            active.last_activity = timezone.now() - timedelta(seconds=125)
+            active.save()
+            res = c.get(reverse('student_dashboard'))
+            self.assertRedirects(res, reverse('login'))
+            self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
+
+    def test_background_polling_does_not_extend_student_activity_and_removed_from_base(self):
+        c = Client()
+        c.post(reverse('login'), {'username': 'stu_quiz_safety', 'password': self.password})
+
+        # Verify base.html no longer renders checkPendingAuth 3-second polling JS
+        dash = c.get(reverse('student_dashboard'))
+        self.assertEqual(dash.status_code, 200)
+        self.assertNotContains(dash, 'checkPendingAuth')
+        self.assertNotContains(dash, 'setInterval(checkPendingAuth')
+
+        # Set last_activity 120s in the past (past the 30s throttle)
+        past_time = timezone.now() - timedelta(seconds=120)
+        ActiveSession.objects.filter(user=self.student).update(last_activity=past_time)
+
+        # Hit passive polling endpoint directly -> must NOT update last_activity
+        poll_res = c.get(reverse('pending_device_request'))
+        self.assertEqual(poll_res.status_code, 200)
+        active = ActiveSession.objects.get(user=self.student)
+        self.assertEqual(active.last_activity, past_time)
+
+        # Meaningful student request DOES extend last_activity
+        c.get(reverse('student_dashboard'))
+        active.refresh_from_db()
+        self.assertGreater(active.last_activity, past_time)
+
+    def test_active_quiz_autosave_and_inactivity_within_30_minutes(self):
+        c = Client()
+        c.post(reverse('login'), {'username': 'stu_quiz_safety', 'password': self.password})
+
+        # Verify PIN and load quiz
+        c.post(reverse('verify_quiz_pin', args=[self.quiz.id]), {'access_pin': 'SAFE26'})
+        quiz_page = c.get(reverse('take_quiz', args=[self.quiz.id]))
+        self.assertEqual(quiz_page.status_code, 200)
+        self.assertContains(quiz_page, 'triggerAutosave')
+
+        # Autosave answer on meaningful change
+        autosave_res = c.post(reverse('save_quiz_progress', args=[self.quiz.id]), {
+            f'question_{self.q1.id}': 'A',
+        })
+        self.assertEqual(autosave_res.status_code, 200)
+        attempt = QuizAttempt.objects.get(student=self.student, quiz=self.quiz)
+        self.assertEqual(attempt.saved_answers.get(str(self.q1.id)), 'A')
+
+        # 20 minutes into a 30-minute quiz (within 30-min SESSION_INACTIVITY_TIMEOUT), student remains authenticated
+        ActiveSession.objects.filter(user=self.student).update(
+            last_activity=timezone.now() - timedelta(minutes=20)
+        )
+        submit_res = c.post(reverse('take_quiz', args=[self.quiz.id]), {
+            f'question_{self.q1.id}': 'A',
+            f'question_{self.q2.id}': 'True',
+            'action': 'submit_all',
+        })
+        sub = QuizSubmission.objects.get(student=self.student, quiz=self.quiz)
+        self.assertRedirects(submit_res, reverse('quiz_result', args=[sub.id]))
+        self.assertEqual(sub.score, 2.0)
+
+    def test_quiz_submission_after_session_expiration_preserves_answers_safely(self):
+        """
+        If auth session expires right before final quiz POST:
+        1. Middleware expires session and logs student out (SESSION_EXPIRED).
+        2. Final submission is NOT executed unauthenticated; answers ARE safely preserved in QuizAttempt.
+        3. After re-login & PIN re-verification, answers are pre-populated and submission succeeds with DSA.
+        """
+        c = Client()
+        c.post(reverse('login'), {'username': 'stu_quiz_safety', 'password': self.password})
+        c.post(reverse('verify_quiz_pin', args=[self.quiz.id]), {'access_pin': 'SAFE26'})
+        c.get(reverse('take_quiz', args=[self.quiz.id]))
+
+        # Simulate > 30 minutes of inactivity while student was filling out quiz
+        ActiveSession.objects.filter(user=self.student).update(
+            last_activity=timezone.now() - timedelta(minutes=31)
+        )
+
+        # Student clicks Submit on expired session
+        res = c.post(reverse('take_quiz', args=[self.quiz.id]), {
+            f'question_{self.q1.id}': 'A',
+            f'question_{self.q2.id}': 'True',
+            'action': 'submit_all',
+        })
+
+        # 1. Auth session expired and redirected to login -> verify-pin
+        expected_next = reverse('verify_quiz_pin', args=[self.quiz.id])
+        self.assertRedirects(res, f"{reverse('login')}?next={expected_next}")
+        self.assertFalse(ActiveSession.objects.filter(user=self.student).exists())
+        self.assertTrue(AuditLog.objects.filter(actor=self.student, action='SESSION_EXPIRED').exists())
+        self.assertFalse(QuizSubmission.objects.filter(student=self.student, quiz=self.quiz).exists())
+
+        # 2. Answers were safely preserved in QuizAttempt.saved_answers (not silently lost!)
+        attempt = QuizAttempt.objects.get(student=self.student, quiz=self.quiz, is_completed=False)
+        self.assertEqual(attempt.saved_answers.get(str(self.q1.id)), 'A')
+        self.assertEqual(attempt.saved_answers.get(str(self.q2.id)), 'True')
+
+        # 3. Student logs back in, re-verifies PIN, sees preserved answers, and completes submission
+        c_new = Client()
+        login_res = c_new.post(f"{reverse('login')}?next={expected_next}", {
+            'username': 'stu_quiz_safety',
+            'password': self.password,
+            'next': expected_next,
+        })
+        self.assertRedirects(login_res, expected_next)
+
+        pin_res = c_new.post(expected_next, {'access_pin': 'SAFE26'})
+        self.assertRedirects(pin_res, reverse('take_quiz', args=[self.quiz.id]), fetch_redirect_response=False)
+
+        resume_page = c_new.get(reverse('take_quiz', args=[self.quiz.id]))
+        self.assertEqual(resume_page.status_code, 200)
+        self.assertContains(resume_page, 'checked')
+
+        final_res = c_new.post(reverse('take_quiz', args=[self.quiz.id]), {
+            f'question_{self.q1.id}': 'A',
+            f'question_{self.q2.id}': 'True',
+            'action': 'submit_all',
+        })
+        sub = QuizSubmission.objects.get(student=self.student, quiz=self.quiz)
+        self.assertRedirects(final_res, reverse('quiz_result', args=[sub.id]))
+        self.assertEqual(sub.score, 2.0)
+        self.assertTrue(verify_dsa_signature(
+            self.student.username, self.quiz.id, sub.score, sub.percentage,
+            sub.submitted_at.isoformat(), sub.dsa_signature,
+            answers=sub.answers, signature_version=sub.signature_version
+        ))
+
+    def test_instructor_not_expired_by_student_inactivity_middleware(self):
+        """Instructor sessions remain unaffected by Student-only inactivity middleware."""
+        c1 = Client()
+        c1.post(reverse('login'), {'username': 'inst_quiz_safety', 'password': self.password})
+        c2 = Client()
+        c2.post(reverse('login'), {'username': 'inst_quiz_safety', 'password': self.password})
+        self.assertEqual(c1.get(reverse('instructor_dashboard')).status_code, 200)
+        self.assertEqual(c2.get(reverse('instructor_dashboard')).status_code, 200)
+
+
+class Phase2CSecurityReviewHardeningTests(TestCase):
+    """
+    Regression tests for Phase 2C security review findings:
+    1. Expired/unauthenticated/revoked AJAX auto-save returns explicit JSON 401 (no HTML redirect).
+    2. Auto-save vs final submission race prevention and row-lock serialization.
+    3. quiz.is_active and duplicate QuizSubmission checks in auto-save & draft recovery.
+    4. Model-level QuizAttempt.save_answers_from_post() validation & locked-question protection.
+    5. Safe SESSION_INACTIVITY_TIMEOUT coercion and passive-poll non-extension of Django sessions.
+    """
+    def setUp(self):
+        self.password = 'V3ryStr0ng!Pass2026'
+        self.student_group, _ = Group.objects.get_or_create(name='Student')
+        self.instructor_group, _ = Group.objects.get_or_create(name='Instructor')
+
+        self.student = User.objects.create_user(
+            username='stu_sec_review', email='secrev@uni.edu', password=self.password
+        )
+        self.student.groups.add(self.student_group)
+
+        self.instructor = User.objects.create_user(
+            username='inst_sec_review', email='inst_secrev@uni.edu', password=self.password
+        )
+        self.instructor.groups.add(self.instructor_group)
+        InstructorProfile.objects.create(
+            user=self.instructor, full_name='Prof Review', status='APPROVED'
+        )
+
+        self.quiz = Quiz.objects.create(
+            title='Security Hardening Quiz',
+            access_pin='HARD26',
+            time_limit_minutes=30,
+            deadline=timezone.now() + timedelta(hours=2),
+            created_by=self.instructor,
+            is_active=True
+        )
+        self.q_mcq = Question.objects.create(
+            quiz=self.quiz,
+            question_text='Pick SHA-256:',
+            question_type='MCQ',
+            option_a='SHA-256',
+            option_b='MD5',
+            option_c='DES',
+            option_d='RC4',
+            correct_answer='A'
+        )
+        self.q_tf = Question.objects.create(
+            quiz=self.quiz,
+            question_text='Argon2 hashes passwords.',
+            question_type='TF',
+            correct_answer='True'
+        )
+        self.q_id = Question.objects.create(
+            quiz=self.quiz,
+            question_text='Name the asymmetric signature algorithm:',
+            question_type='ID',
+            correct_answer='DSA'
+        )
+
+        # Foreign question on another quiz to verify cross-quiz isolation
+        self.other_quiz = Quiz.objects.create(
+            title='Other Quiz',
+            access_pin='OTHR26',
+            time_limit_minutes=15,
+            deadline=timezone.now() + timedelta(hours=2),
+            created_by=self.instructor,
+            is_active=True
+        )
+        self.other_q = Question.objects.create(
+            quiz=self.other_quiz,
+            question_text='Foreign Q',
+            question_type='MCQ',
+            option_a='A', option_b='B', option_c='C', option_d='D',
+            correct_answer='B'
+        )
+
+    def _login_and_enter_quiz(self, client):
+        client.post(reverse('login'), {'username': 'stu_sec_review', 'password': self.password})
+        client.post(reverse('verify_quiz_pin', args=[self.quiz.id]), {'access_pin': 'HARD26'})
+        page = client.get(reverse('take_quiz', args=[self.quiz.id]))
+        self.assertEqual(page.status_code, 200)
+        return page
+
+    def test_expired_ajax_autosave_returns_401_json_and_preserves_valid_draft(self):
+        c = Client()
+        self._login_and_enter_quiz(c)
+
+        ActiveSession.objects.filter(user=self.student).update(
+            last_activity=timezone.now() - timedelta(minutes=31)
+        )
+
+        # 1. Expired session on AJAX autosave returns explicit 401 JSON (never 302 login HTML)
+        res = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {
+                f'question_{self.q_mcq.id}': 'A',
+                f'question_{self.q_id.id}': 'DSA',
+            },
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(res.status_code, 401)
+        self.assertIn('application/json', res['Content-Type'])
+        payload = res.json()
+        self.assertEqual(payload['status'], 'session_expired')
+        self.assertTrue(payload['preserved'])
+        self.assertIn('verify-pin', payload['login_url'])
+        self.assertIn('preserved', payload['message'].lower())
+
+        attempt = QuizAttempt.objects.get(student=self.student, quiz=self.quiz, is_completed=False)
+        self.assertEqual(attempt.saved_answers.get(str(self.q_mcq.id)), 'A')
+        self.assertEqual(attempt.saved_answers.get(str(self.q_id.id)), 'DSA')
+        self.assertFalse(QuizSubmission.objects.filter(student=self.student, quiz=self.quiz).exists())
+
+        # 2. Follow-up autosave after logout also returns 401 JSON with preserved=False
+        res2 = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_tf.id}': 'True'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(res2.status_code, 401)
+        self.assertIn('application/json', res2['Content-Type'])
+        payload2 = res2.json()
+        self.assertEqual(payload2['status'], 'session_expired')
+        self.assertFalse(payload2['preserved'])
+        attempt.refresh_from_db()
+        self.assertNotIn(str(self.q_tf.id), attempt.saved_answers)
+
+    def test_revoked_ajax_autosave_returns_401_json(self):
+        c = Client()
+        self._login_and_enter_quiz(c)
+        ActiveSession.objects.filter(user=self.student).update(session_key='different_session_key_taken_over')
+
+        res = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_mcq.id}': 'A'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(res.status_code, 401)
+        payload = res.json()
+        self.assertEqual(payload['status'], 'session_revoked')
+        self.assertFalse(payload['preserved'])
+
+    def test_take_quiz_template_contains_explicit_autosave_race_and_redirect_guards(self):
+        c = Client()
+        page = self._login_and_enter_quiz(c)
+        self.assertContains(page, "redirect: 'manual'")
+        self.assertContains(page, 'session-expired-banner')
+        self.assertContains(page, 'cancelPendingAutosaves')
+        self.assertContains(page, 'AbortController')
+        self.assertContains(page, 'maxlength="200"')
+
+    def test_autosave_rejects_after_final_submission_and_grades_latest_answers(self):
+        c = Client()
+        self._login_and_enter_quiz(c)
+
+        # Autosave an initial answer then update it via autosave before final submit
+        res1 = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_mcq.id}': 'B', f'question_{self.q_tf.id}': 'False'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(res1.status_code, 200)
+
+        res2 = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {
+                f'question_{self.q_mcq.id}': 'A',
+                f'question_{self.q_tf.id}': 'True',
+                f'question_{self.q_id.id}': 'DSA',
+            },
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(res2.status_code, 200)
+
+        # Preserve session PIN artificially after submit to verify server-side rejection of late autosave
+        session = c.session
+        pin_snapshot = session.get(f'pin_verified_quiz_{self.quiz.id}')
+
+        submit_res = c.post(reverse('take_quiz', args=[self.quiz.id]), {
+            f'question_{self.q_mcq.id}': 'A',
+            f'question_{self.q_tf.id}': 'True',
+            f'question_{self.q_id.id}': 'DSA',
+            'action': 'submit_all',
+        })
+        sub = QuizSubmission.objects.get(student=self.student, quiz=self.quiz)
+        self.assertRedirects(submit_res, reverse('quiz_result', args=[sub.id]))
+        self.assertEqual(sub.score, 3.0)
+        self.assertTrue(verify_dsa_signature(
+            self.student.username, self.quiz.id, sub.score, sub.percentage,
+            sub.submitted_at.isoformat(), sub.dsa_signature,
+            answers=sub.answers, signature_version=sub.signature_version
+        ))
+
+        # Re-inject PIN flag and attempt late autosave -> blocked with 409 Conflict
+        session = c.session
+        session[f'pin_verified_quiz_{self.quiz.id}'] = pin_snapshot
+        session.save()
+
+        late_res = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_mcq.id}': 'D'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(late_res.status_code, 409)
+        attempt = QuizAttempt.objects.get(student=self.student, quiz=self.quiz)
+        self.assertTrue(attempt.is_completed)
+        self.assertEqual(attempt.saved_answers.get(str(self.q_mcq.id)), 'A')
+
+        # Duplicate POST submit attempt redirects without creating a second QuizSubmission
+        dup_submit = c.post(reverse('take_quiz', args=[self.quiz.id]), {
+            f'question_{self.q_mcq.id}': 'D',
+            'action': 'submit_all',
+        })
+        self.assertRedirects(dup_submit, reverse('quiz_result', args=[sub.id]))
+        self.assertEqual(QuizSubmission.objects.filter(student=self.student, quiz=self.quiz).count(), 1)
+
+    def test_inactive_quiz_and_duplicate_submission_blocked_in_autosave_and_draft_recovery(self):
+        c = Client()
+        self._login_and_enter_quiz(c)
+
+        # Instructor deactivates quiz mid-attempt
+        self.quiz.is_active = False
+        self.quiz.save(update_fields=['is_active'])
+
+        inactive_res = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_mcq.id}': 'A'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(inactive_res.status_code, 403)
+        attempt = QuizAttempt.objects.get(student=self.student, quiz=self.quiz)
+        self.assertEqual(attempt.saved_answers, {})
+
+        # Expired session draft recovery must ALSO refuse saving when quiz is inactive
+        ActiveSession.objects.filter(user=self.student).update(
+            last_activity=timezone.now() - timedelta(minutes=31)
+        )
+        expired_inactive_res = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_mcq.id}': 'A'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(expired_inactive_res.status_code, 401)
+        self.assertFalse(expired_inactive_res.json()['preserved'])
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.saved_answers, {})
+
+        # Re-login with active quiz and a pre-existing QuizSubmission -> draft recovery must not modify answers
+        self.quiz.is_active = True
+        self.quiz.save(update_fields=['is_active'])
+        c2 = Client()
+        self._login_and_enter_quiz(c2)
+        QuizSubmission.objects.create(
+            student=self.student, quiz=self.quiz, score=0.0, percentage=0.0,
+            dsa_signature='sig', answers={}
+        )
+        ActiveSession.objects.filter(user=self.student).update(
+            last_activity=timezone.now() - timedelta(minutes=31)
+        )
+        dup_expired_res = c2.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_mcq.id}': 'A'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(dup_expired_res.status_code, 401)
+        self.assertFalse(dup_expired_res.json()['preserved'])
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.saved_answers, {})
+
+    def test_model_level_save_answers_validation_and_locking(self):
+        from django.core.exceptions import ValidationError
+
+        attempt = QuizAttempt.objects.create(
+            student=self.student,
+            quiz=self.quiz,
+            deadline=timezone.now() + timedelta(minutes=20),
+            saved_answers={str(self.q_mcq.id): 'A'},
+            locked_question_ids=[self.q_mcq.id],
+        )
+
+        # Locked question cannot be overwritten; foreign question ID is ignored; valid updates work
+        changed = attempt.save_answers_from_post({
+            f'question_{self.q_mcq.id}': 'D',
+            f'question_{self.other_q.id}': 'B',
+            f'question_{self.q_tf.id}': 'true',
+            f'question_{self.q_id.id}': '',
+        })
+        self.assertTrue(changed)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.saved_answers[str(self.q_mcq.id)], 'A')
+        self.assertEqual(attempt.saved_answers[str(self.q_tf.id)], 'True')
+        self.assertEqual(attempt.saved_answers[str(self.q_id.id)], '')
+        self.assertNotIn(str(self.other_q.id), attempt.saved_answers)
+
+        # Unlock MCQ for invalid choice checks
+        attempt.locked_question_ids = []
+        attempt.save(update_fields=['locked_question_ids'])
+
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_mcq.id}': 'E'})
+
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_tf.id}': 'Maybe'})
+
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_id.id}': 'X' * 201})
+
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_id.id}': 'DSA\x00bad'})
+
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_id.id}': None})
+
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_mcq.id}': ['A', 'B']})
+
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post(['not-a-mapping'])
+
+        # Expired attempt deadline rejected at model level
+        attempt.deadline = timezone.now() - timedelta(seconds=10)
+        attempt.save(update_fields=['deadline'])
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_id.id}': 'DSA'})
+
+        # Completed attempt rejected at model level
+        attempt.deadline = timezone.now() + timedelta(minutes=20)
+        attempt.is_completed = True
+        attempt.save(update_fields=['deadline', 'is_completed'])
+        with self.assertRaises(ValidationError):
+            attempt.save_answers_from_post({f'question_{self.q_id.id}': 'DSA'})
+
+        # Autosave view returns 400 JSON for invalid choice / oversized answer
+        c = Client()
+        attempt.delete()
+        self._login_and_enter_quiz(c)
+        bad_view_res = c.post(
+            reverse('save_quiz_progress', args=[self.quiz.id]),
+            {f'question_{self.q_mcq.id}': 'Z'},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        self.assertEqual(bad_view_res.status_code, 400)
+        self.assertEqual(bad_view_res.json()['status'], 'error')
+
+    def test_inactivity_timeout_safe_coercion_and_session_save_every_request(self):
+        from django.conf import settings
+        from django.contrib.sessions.models import Session
+        from quiz.models import get_session_inactivity_timeout_seconds
+
+        self.assertFalse(settings.SESSION_SAVE_EVERY_REQUEST)
+
+        with override_settings(SESSION_INACTIVITY_TIMEOUT='120'):
+            self.assertEqual(get_session_inactivity_timeout_seconds(), 120)
+            active = ActiveSession(
+                user=self.student,
+                session_key='abc',
+                last_activity=timezone.now() - timedelta(seconds=130),
+            )
+            self.assertTrue(active.is_expired())
+
+        with override_settings(SESSION_INACTIVITY_TIMEOUT='not-a-number'):
+            self.assertEqual(get_session_inactivity_timeout_seconds(), 1800)
+
+        with override_settings(SESSION_INACTIVITY_TIMEOUT=True):
+            self.assertEqual(get_session_inactivity_timeout_seconds(), 1800)
+
+        with override_settings(SESSION_INACTIVITY_TIMEOUT=-5):
+            self.assertEqual(get_session_inactivity_timeout_seconds(), 1800)
+
+        # Verify passive polling does NOT slide django_session.expire_date while active requests DO
+        c = Client()
+        c.post(reverse('login'), {'username': 'stu_sec_review', 'password': self.password})
+        session_obj = Session.objects.get(session_key=c.session.session_key)
+        past_expire = timezone.now() + timedelta(minutes=10)
+        Session.objects.filter(pk=session_obj.pk).update(expire_date=past_expire)
+
+        poll_res = c.get(reverse('pending_device_request'))
+        self.assertEqual(poll_res.status_code, 200)
+        session_obj.refresh_from_db()
+        self.assertEqual(session_obj.expire_date, past_expire)
+
+        dash_res = c.get(reverse('student_dashboard'))
+        self.assertEqual(dash_res.status_code, 200)
+        session_obj.refresh_from_db()
+        self.assertGreater(session_obj.expire_date, past_expire + timedelta(minutes=40))

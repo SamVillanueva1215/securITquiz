@@ -190,11 +190,13 @@ STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Session Security Configuration
-# Cookie lifetime (allows middleware to intercept expired sessions and generate SESSION_EXPIRED audit logs)
-SESSION_COOKIE_AGE = 1800
-# Strict 5-minute inactivity expiration window (enforced by SingleActiveSessionMiddleware)
-SESSION_INACTIVITY_TIMEOUT = 300
-SESSION_SAVE_EVERY_REQUEST = True
+# Cookie lifetime (exceeds inactivity timeout so middleware can intercept expired sessions and log SESSION_EXPIRED)
+SESSION_COOKIE_AGE = 3600
+# Student inactivity expiration window in seconds (default 30 minutes / 1800s, enforced by SingleActiveSessionMiddleware)
+SESSION_INACTIVITY_TIMEOUT = 1800
+# Disabled globally so passive polling cannot trigger DB session writes or refresh cookie expiry;
+# SingleActiveSessionMiddleware slides request.session.modified on meaningful authenticated requests.
+SESSION_SAVE_EVERY_REQUEST = False
 
 # Cookie Security Settings (Part 4.5 & Part 10)
 SESSION_COOKIE_HTTPONLY = True
