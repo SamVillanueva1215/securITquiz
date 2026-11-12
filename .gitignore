@@ -13,3 +13,5 @@ env/
 # Cryptographic Keys
 *.pem
 *.key
+.vercel
+.env*

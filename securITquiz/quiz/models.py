@@ -17,6 +17,56 @@ class StudentProfile(models.Model):
         return f"{self.full_name} ({self.student_id})"
 
 
+class InstructorProfile(models.Model):
+    """
+    Manages instructor registration, academic affiliation, and administrator approval lifecycle.
+    Enforces that access to instructor features is strictly gated by the single status field.
+    """
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending Approval'),
+        ('APPROVED', 'Approved'),
+        ('REJECTED', 'Rejected'),
+    )
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='instructor_profile'
+    )
+    full_name = models.CharField(max_length=200)
+    department = models.CharField(max_length=200, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default='PENDING',
+        db_index=True
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='reviewed_instructors'
+    )
+    rejection_reason = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=['PENDING', 'APPROVED', 'REJECTED']),
+                name='valid_instructor_status'
+            )
+        ]
+
+    def is_authorized(self):
+        return self.status == 'APPROVED'
+
+    def __str__(self):
+        return f"{self.full_name} ({self.user.username}) [{self.status}]"
+
+
 class Quiz(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -286,6 +336,10 @@ class AuditLog(models.Model):
         ('DSA_SIGNATURE_GENERATED', 'DSA Signature Generated'),
         ('DSA_VERIFY_SUCCESS', 'DSA Verification Success'),
         ('DSA_VERIFY_FAILED', 'DSA Verification Failed (Tamper Alert)'),
+        # Instructor Account Lifecycle
+        ('INSTRUCTOR_REGISTERED', 'Instructor Registered (Pending Approval)'),
+        ('INSTRUCTOR_APPROVED', 'Instructor Approved'),
+        ('INSTRUCTOR_REJECTED', 'Instructor Registration Rejected'),
     )
 
     actor = models.ForeignKey(

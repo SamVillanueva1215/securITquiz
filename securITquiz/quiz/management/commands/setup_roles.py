@@ -4,10 +4,10 @@ from django.contrib.auth.models import Group
 
 
 class Command(BaseCommand):
-    help = "Creates the default Student and Instructor groups."
+    help = "Creates the default Student, Instructor, and Administrator groups."
 
     def handle(self, *args, **options):
-        roles = ["Student", "Instructor"]
+        roles = ["Student", "Instructor", "Administrator"]
 
         for role in roles:
             group, created = Group.objects.get_or_create(name=role)
